@@ -25,7 +25,6 @@ jobs:
         id: info
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
-          VERSION: ${{ steps.info.outputs.version }}
         run: |
           VERSION=$(echo "$PR_BODY" | grep -oP '^VERSION:\s*\K[\d.]+' | head -1)
           if [ -z "$VERSION" ]; then
@@ -36,12 +35,17 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
 
+      - name: Read changelog entry
+        id: changelog
+        run: |
           python3 << 'PYEOF'
-          import re, os
+          import re
 
-          version = os.environ.get('VERSION', '')
-          with open('CHANGELOG.md', 'r') as f:
+          with open('CHANGELOG.md', 'r', encoding='utf-8', newline='') as f:
               content = f.read()
+
+          content = content.replace('\r\n', '\n').replace('\r', '\n')
+          version = '${{ steps.info.outputs.version }}'
 
           match = re.search(
               rf'(## \[{re.escape(version)}\].*?)(?=\n## \[|\Z)',
@@ -50,22 +54,24 @@ jobs:
 
           entry = match.group(1).strip() if match else f'See CHANGELOG.md for v{version} details.'
 
-          with open('/tmp/changelog_body.txt', 'w') as f:
+          with open('/tmp/changelog_body.txt', 'w', encoding='utf-8') as f:
               f.write(entry)
+
+          print("Changelog entry found:")
+          print(entry)
           PYEOF
 
-          {
-            echo 'changelog<<EOF'
-            cat /tmp/changelog_body.txt
-            echo EOF
-          } >> $GITHUB_OUTPUT
+          DELIMITER=$(openssl rand -hex 8)
+          echo "body<<${DELIMITER}" >> $GITHUB_OUTPUT
+          cat /tmp/changelog_body.txt >> $GITHUB_OUTPUT
+          echo "${DELIMITER}" >> $GITHUB_OUTPUT
 
       - name: Tag the release
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag v${{ steps.info.outputs.version }}
-          git push origin v${{ steps.info.outputs.version }}
+          git tag v${{ steps.info.outputs.version }} 2>/dev/null || echo "Tag already exists, skipping"
+          git push origin v${{ steps.info.outputs.version }} 2>/dev/null || echo "Tag already on remote, skipping"
 
       - name: Install and build NUI
         run: |
@@ -100,8 +106,6 @@ jobs:
             ./ dist/
           echo "Build contents:"
           ls -la dist/
-          echo "Web dist contents:"
-          ls -la dist/web/dist/ 2>/dev/null || echo "No web/dist found"
 
       - name: Update fxmanifest version
         run: |
@@ -112,16 +116,28 @@ jobs:
       - name: Package zip
         run: |
           VERSION=${{ steps.info.outputs.version }}
-          SCRIPT_NAME=$(basename ${{ github.repository }})
+          SCRIPT_NAME=${{ github.event.repository.name }}
           cd dist && zip -r "../${SCRIPT_NAME}-v${VERSION}.zip" . && cd ..
+          echo "Created: ${SCRIPT_NAME}-v${VERSION}.zip"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.info.outputs.version }}
-          name: v${{ steps.info.outputs.version }}
-          body: ${{ steps.info.outputs.changelog }}
-          files: ${{ github.event.repository.name }}-v${{ steps.info.outputs.version }}.zip
+        run: |
+          VERSION=${{ steps.info.outputs.version }}
+          SCRIPT_NAME=${{ github.event.repository.name }}
+
+          if gh release view "v${VERSION}" > /dev/null 2>&1; then
+            echo "Release already exists, updating..."
+            gh release edit "v${VERSION}" \
+              --title "v${VERSION}" \
+              --notes-file /tmp/changelog_body.txt
+            gh release upload "v${VERSION}" "${SCRIPT_NAME}-v${VERSION}.zip" --clobber
+          else
+            echo "Creating new release..."
+            gh release create "v${VERSION}" \
+              --title "v${VERSION}" \
+              --notes-file /tmp/changelog_body.txt \
+              "${SCRIPT_NAME}-v${VERSION}.zip"
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -145,7 +161,7 @@ jobs:
           release_url = os.environ['RELEASE_URL']
           script_name = repo.split('/')[-1]
 
-          with open('/tmp/changelog_body.txt') as f:
+          with open('/tmp/changelog_body.txt', 'r', encoding='utf-8') as f:
               changelog = f.read().strip()
 
           if len(changelog) > 3800:
