@@ -43,8 +43,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add CHANGELOG.md .changelog/fragments/
-          git commit -m "chore: changelog for v${{ steps.info.outputs.version }} [skip ci]"
-          git push origin staging
+          git commit -m "chore: changelog for v${{ steps.info.outputs.version }} [skip ci]" || echo "Nothing to commit"
+          git push origin staging --force
 
       - name: Install and build NUI
         run: |
