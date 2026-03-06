@@ -4,6 +4,7 @@ stream/cache/
 Thumbs.db
 .vscode/
 .idea/
-dist/
 *.zip
 node_modules/
+web/node_modules/
+web/dist/

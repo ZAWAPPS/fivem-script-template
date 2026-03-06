@@ -46,6 +46,15 @@ jobs:
           git commit -m "chore: changelog for v${{ steps.info.outputs.version }} [skip ci]"
           git push origin staging
 
+      - name: Install and build NUI
+        run: |
+          if [ -f "web/package.json" ]; then
+            echo "Building NUI..."
+            cd web && npm install && npm run build && cd ..
+          else
+            echo "No NUI found, skipping"
+          fi
+
       - name: Build script
         run: |
           mkdir -p dist
@@ -53,12 +62,25 @@ jobs:
             --exclude='.git' \
             --exclude='.github' \
             --exclude='.changelog' \
-            --exclude='dist' \
             --exclude='*.zip' \
             --exclude='.gitignore' \
             --exclude='README.md' \
             --exclude='node_modules' \
+            --exclude='web/src' \
+            --exclude='web/public' \
+            --exclude='web/node_modules' \
+            --exclude='web/.gitignore' \
+            --exclude='web/eslint.config.*' \
+            --exclude='web/index.html' \
+            --exclude='web/package.json' \
+            --exclude='web/package-lock.json' \
+            --exclude='web/vite.config.*' \
+            --exclude='web/tsconfig.*' \
             ./ dist/
+          echo "Build contents:"
+          ls -la dist/
+          echo "Web dist contents:"
+          ls -la dist/web/dist/ 2>/dev/null || echo "No web/dist found"
 
       - name: Update fxmanifest version
         run: |
