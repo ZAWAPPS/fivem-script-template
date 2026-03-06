@@ -22,10 +22,13 @@ git push -u origin main
 
 # Configure merge settings (squash only)
 echo "Configuring merge settings..."
-gh repo edit \
-  --enable-squash-merge \
-  --disable-merge-commit \
-  --disable-rebase-merge
+gh api \
+  --method PATCH \
+  -H "Accept: application/vnd.github+json" \
+  /repos/$REPO \
+  -f allow_squash_merge=true \
+  -f allow_merge_commit=false \
+  -f allow_rebase_merge=false
 
 # Enable issues
 echo "Enabling issues..."
