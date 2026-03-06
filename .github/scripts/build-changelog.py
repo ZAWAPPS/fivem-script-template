@@ -12,7 +12,7 @@ from datetime import date
 
 FRAGMENT_DIR = '.changelog/fragments'
 CHANGELOG_FILE = 'CHANGELOG.md'
-MARKER = '<!-- towncrier release notes start -->\n'
+MARKER = '<!-- towncrier release notes start -->'
 
 SECTION_ORDER = ['added', 'changed', 'fixed', 'removed', 'config']
 SECTION_NAMES = {
