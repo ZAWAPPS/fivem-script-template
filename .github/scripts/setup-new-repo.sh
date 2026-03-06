@@ -20,14 +20,14 @@ git push -u origin staging
 git checkout main
 git push -u origin main
 
-# Configure merge settings (squash only)
+# Configure merge settings
 echo "Configuring merge settings..."
 MSYS_NO_PATHCONV=1 gh api \
   --method PATCH \
   -H "Accept: application/vnd.github+json" \
   /repos/$REPO \
   -f allow_squash_merge=true \
-  -f allow_merge_commit=false \
+  -f allow_merge_commit=true \
   -f allow_rebase_merge=false
 
 # Enable issues
