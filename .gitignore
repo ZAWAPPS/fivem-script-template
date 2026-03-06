@@ -1,0 +1,9 @@
+stream/cache/
+.cache/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+dist/
+*.zip
+node_modules/

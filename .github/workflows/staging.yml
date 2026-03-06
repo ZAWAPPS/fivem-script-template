@@ -1,0 +1,130 @@
+name: Staging Build
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - staging
+
+jobs:
+  staging-build:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from PR body
+        id: info
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          VERSION=$(echo "$PR_BODY" | grep -oP '^VERSION:\s*\K[\d.]+' | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "❌ Could not extract VERSION from PR body"
+            exit 1
+          fi
+          VERSION=$(echo "$VERSION" | sed 's/^v//')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+
+      - name: Build changelog
+        run: python3 .github/scripts/build-changelog.py ${{ steps.info.outputs.version }}
+
+      - name: Commit changelog and deleted fragments
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md .changelog/fragments/
+          git commit -m "chore: changelog for v${{ steps.info.outputs.version }} [skip ci]"
+          git push origin staging
+
+      - name: Build script
+        run: |
+          mkdir -p dist
+          rsync -av \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.changelog' \
+            --exclude='dist' \
+            --exclude='*.zip' \
+            --exclude='.gitignore' \
+            --exclude='README.md' \
+            --exclude='node_modules' \
+            ./ dist/
+
+      - name: Update fxmanifest version
+        run: |
+          VERSION=${{ steps.info.outputs.version }}
+          sed -i "s/version '[^']*'/version '$VERSION'/" dist/fxmanifest.lua
+          echo "Updated fxmanifest.lua to version $VERSION"
+
+      - name: Package zip
+        run: |
+          VERSION=${{ steps.info.outputs.version }}
+          SCRIPT_NAME=$(basename ${{ github.repository }})
+          cd dist && zip -r "../${SCRIPT_NAME}-v${VERSION}-staging.zip" . && cd ..
+
+      - name: Upload staging artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.repository.name }}-v${{ steps.info.outputs.version }}-staging
+          path: ${{ github.event.repository.name }}-v${{ steps.info.outputs.version }}-staging.zip
+          retention-days: 30
+
+      - name: Notify Discord staging
+        env:
+          DISCORD_STAGING_WEBHOOK_URL: ${{ secrets.DISCORD_STAGING_WEBHOOK_URL }}
+          VERSION: ${{ steps.info.outputs.version }}
+          REPO: ${{ github.repository }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 << 'EOF'
+          import json, os, urllib.request
+
+          webhook_url = os.environ.get('DISCORD_STAGING_WEBHOOK_URL', '')
+          if not webhook_url:
+              print("No staging webhook configured, skipping")
+              exit(0)
+
+          version     = os.environ['VERSION']
+          repo        = os.environ['REPO']
+          run_url     = os.environ['RUN_URL']
+          script_name = repo.split('/')[-1]
+
+          with open('/tmp/changelog_body.txt') as f:
+              changelog = f.read().strip()
+
+          if len(changelog) > 3800:
+              changelog = changelog[:3800] + '\n\n*...see CHANGELOG.md for full notes*'
+
+          payload = {
+              "username": "Staging Build",
+              "embeds": [{
+                  "title": f"🔧 {script_name} — v{version} Staging Build",
+                  "description": changelog or "No changelog entries found.",
+                  "color": 16776960,
+                  "fields": [{
+                      "name": "📥 Download",
+                      "value": f"[GitHub Actions]({run_url})",
+                      "inline": False
+                  }],
+                  "footer": {"text": f"Staging • v{version} — not yet released"}
+              }]
+          }
+
+          data = json.dumps(payload).encode('utf-8')
+          req = urllib.request.Request(
+              webhook_url, data=data,
+              headers={'Content-Type': 'application/json'}
+          )
+          with urllib.request.urlopen(req) as r:
+              print(f"Discord: {r.status}")
+          EOF

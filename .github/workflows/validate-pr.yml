@@ -1,0 +1,71 @@
+name: Validate PR
+
+on:
+  pull_request:
+    branches:
+      - main
+      - staging
+      - develop
+    types: [opened, edited, synchronize]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate PR
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          TARGET_BRANCH: ${{ github.base_ref }}
+        run: |
+          python3 << 'EOF'
+          import os, re, sys, subprocess, glob
+
+          body          = os.environ.get('PR_BODY', '')
+          target_branch = os.environ.get('TARGET_BRANCH', '')
+
+          if target_branch in ('main', 'staging'):
+              match = re.search(r'^VERSION:\s*(\S+)', body, re.MULTILINE)
+
+              if not match:
+                  print("❌ Release PR must contain a VERSION field in the description.")
+                  print("   Add a line that looks exactly like: VERSION: 1.2.0")
+                  sys.exit(1)
+
+              version = match.group(1).strip().lstrip('v')
+
+              if not re.fullmatch(r'\d+\.\d+\.\d+', version):
+                  print(f"❌ Version '{version}' is not valid.")
+                  print("   Must be exactly X.Y.Z — example: VERSION: 1.2.0")
+                  sys.exit(1)
+
+              result = subprocess.run(
+                  ['git', 'tag', '--list', f'v{version}'],
+                  capture_output=True, text=True
+              )
+              if result.stdout.strip():
+                  print(f"❌ Version v{version} already exists as a git tag.")
+                  print("   Bump the version number.")
+                  sys.exit(1)
+
+              print(f"✅ Version v{version} is valid and unique")
+
+          elif target_branch == 'develop':
+              fragments = [
+                  f for f in glob.glob('.changelog/fragments/**', recursive=True)
+                  if os.path.isfile(f) and not f.endswith('.gitkeep')
+              ]
+              if not fragments:
+                  print("❌ No changelog fragments found in .changelog/fragments/")
+                  print("   Run bash .github/scripts/add-fragment.sh before opening this PR.")
+                  sys.exit(1)
+
+              print(f"✅ Found {len(fragments)} changelog fragment(s):")
+              for f in fragments:
+                  print(f"   {f}")
+
+          print("✅ PR is valid")
+          EOF

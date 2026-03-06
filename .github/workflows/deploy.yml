@@ -1,0 +1,162 @@
+name: Build and Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+jobs:
+  build-and-release:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from PR body
+        id: info
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          VERSION=$(echo "$PR_BODY" | grep -oP '^VERSION:\s*\K[\d.]+' | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "❌ Could not extract VERSION from PR body"
+            exit 1
+          fi
+          VERSION=$(echo "$VERSION" | sed 's/^v//')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+
+          python3 << 'PYEOF'
+          import re, os
+
+          version = os.environ.get('VERSION', '')
+          with open('CHANGELOG.md', 'r') as f:
+              content = f.read()
+
+          match = re.search(
+              rf'(## \[{re.escape(version)}\].*?)(?=\n## \[|\Z)',
+              content, re.DOTALL
+          )
+
+          entry = match.group(1).strip() if match else f'See CHANGELOG.md for v{version} details.'
+
+          with open('/tmp/changelog_body.txt', 'w') as f:
+              f.write(entry)
+          PYEOF
+
+          {
+            echo 'changelog<<EOF'
+            cat /tmp/changelog_body.txt
+            echo EOF
+          } >> $GITHUB_OUTPUT
+        env:
+          VERSION: ${{ steps.info.outputs.version }}
+
+      - name: Tag the release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag v${{ steps.info.outputs.version }}
+          git push origin v${{ steps.info.outputs.version }}
+
+      - name: Build script
+        run: |
+          mkdir -p dist
+          rsync -av \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.changelog' \
+            --exclude='dist' \
+            --exclude='*.zip' \
+            --exclude='.gitignore' \
+            --exclude='README.md' \
+            --exclude='node_modules' \
+            ./ dist/
+
+      - name: Update fxmanifest version
+        run: |
+          VERSION=${{ steps.info.outputs.version }}
+          sed -i "s/version '[^']*'/version '$VERSION'/" dist/fxmanifest.lua
+          echo "Updated fxmanifest.lua to version $VERSION"
+
+      - name: Package zip
+        run: |
+          VERSION=${{ steps.info.outputs.version }}
+          SCRIPT_NAME=$(basename ${{ github.repository }})
+          cd dist && zip -r "../${SCRIPT_NAME}-v${VERSION}.zip" . && cd ..
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.info.outputs.version }}
+          name: v${{ steps.info.outputs.version }}
+          body: ${{ steps.info.outputs.changelog }}
+          files: ${{ github.event.repository.name }}-v${{ steps.info.outputs.version }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          VERSION: ${{ steps.info.outputs.version }}
+          REPO: ${{ github.repository }}
+          RELEASE_URL: https://github.com/${{ github.repository }}/releases/tag/v${{ steps.info.outputs.version }}
+        run: |
+          python3 << 'EOF'
+          import json, os, urllib.request
+
+          webhook_url = os.environ.get('DISCORD_WEBHOOK_URL', '')
+          if not webhook_url:
+              print("No webhook configured, skipping")
+              exit(0)
+
+          version     = os.environ['VERSION']
+          repo        = os.environ['REPO']
+          release_url = os.environ['RELEASE_URL']
+          script_name = repo.split('/')[-1]
+
+          with open('/tmp/changelog_body.txt') as f:
+              changelog = f.read().strip()
+
+          if len(changelog) > 3800:
+              changelog = changelog[:3800] + '\n\n*...see GitHub release for full notes*'
+
+          payload = {
+              "username": "Script Updates",
+              "embeds": [{
+                  "title": f"📦 {script_name} — v{version} Released",
+                  "description": changelog or "See GitHub release for details.",
+                  "color": 3066993,
+                  "fields": [
+                      {
+                          "name": "📥 Download",
+                          "value": f"[GitHub Release]({release_url})",
+                          "inline": False
+                      },
+                      {
+                          "name": "⚠️ Config Changes",
+                          "value": "Check the changelog above for any `config.lua` changes needed.",
+                          "inline": False
+                      }
+                  ],
+                  "footer": {"text": f"v{version} • built automatically on merge"}
+              }]
+          }
+
+          data = json.dumps(payload).encode('utf-8')
+          req = urllib.request.Request(
+              webhook_url, data=data,
+              headers={'Content-Type': 'application/json'}
+          )
+          with urllib.request.urlopen(req) as r:
+              print(f"Discord: {r.status}")
+          EOF
