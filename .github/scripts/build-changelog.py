@@ -79,8 +79,11 @@ def update_changelog(version, entry):
         print(f"ERROR: {CHANGELOG_FILE} not found")
         sys.exit(1)
 
-    with open(CHANGELOG_FILE, 'r') as f:
+    with open(CHANGELOG_FILE, 'r', encoding='utf-8', newline='') as f:
         content = f.read()
+
+    # Normalize line endings
+    content = content.replace('\r\n', '\n').replace('\r', '\n')
 
     if MARKER not in content:
         print(f"ERROR: Marker not found in {CHANGELOG_FILE}")
@@ -94,7 +97,7 @@ def update_changelog(version, entry):
 
     new_content = content.replace(MARKER, MARKER + '\n' + entry + '\n')
 
-    with open(CHANGELOG_FILE, 'w') as f:
+    with open(CHANGELOG_FILE, 'w', encoding='utf-8', newline='\n') as f:
         f.write(new_content)
 
     print(f"Updated {CHANGELOG_FILE}")
