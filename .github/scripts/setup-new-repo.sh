@@ -48,6 +48,19 @@ gh secret set DISCORD_WEBHOOK_URL --body "$DISCORD_WEBHOOK"
 gh secret set DISCORD_STAGING_WEBHOOK_URL --body "$DISCORD_STAGING_WEBHOOK"
 echo "Secrets set."
 
+# Create initial changelog fragment
+echo ""
+echo "What is the initial version of this script? (e.g. 0.1.0)"
+read INITIAL_VERSION
+
+echo "Give a one-line description of this script for the changelog:"
+read INITIAL_DESCRIPTION
+
+echo "- ${INITIAL_DESCRIPTION}" > .changelog/fragments/initial-release.added.md
+git add .changelog/fragments/initial-release.added.md
+git commit -m "chore: initial release fragment"
+git push origin develop
+
 git checkout main
 git push origin main --force
 
