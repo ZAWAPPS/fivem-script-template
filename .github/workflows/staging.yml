@@ -133,11 +133,6 @@ jobs:
                   "title": f"🔧 {script_name} — v{version} Staging Build",
                   "description": changelog or "No changelog entries found.",
                   "color": 16776960,
-                  "fields": [{
-                      "name": "📥 Download",
-                      "value": f"[GitHub Actions]({run_url})",
-                      "inline": False
-                  }],
                   "footer": {"text": f"Staging • v{version} — not yet released"}
               }]
           }
