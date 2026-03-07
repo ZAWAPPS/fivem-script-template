@@ -39,8 +39,10 @@ echo ""
 echo "Setting repository secrets..."
 echo "Paste your PUBLIC Discord webhook URL (release announcements), then press Enter:"
 read -s DISCORD_WEBHOOK
+echo ""
 echo "Paste your STAGING Discord webhook URL (internal builds), then press Enter:"
 read -s DISCORD_STAGING_WEBHOOK
+echo ""
 
 gh secret set DISCORD_WEBHOOK_URL --body "$DISCORD_WEBHOOK"
 gh secret set DISCORD_STAGING_WEBHOOK_URL --body "$DISCORD_STAGING_WEBHOOK"

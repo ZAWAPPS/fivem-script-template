@@ -39,14 +39,6 @@ jobs:
         run: |
           python3 .github/scripts/build-changelog.py ${{ steps.info.outputs.version }}
 
-      - name: Read changelog entry
-        id: changelog
-        run: |
-          DELIMITER=$(openssl rand -hex 8)
-          echo "body<<${DELIMITER}" >> $GITHUB_OUTPUT
-          cat /tmp/changelog_body.txt >> $GITHUB_OUTPUT
-          echo "${DELIMITER}" >> $GITHUB_OUTPUT
-
       - name: Commit changelog and deleted fragments
         run: |
           git config user.name "github-actions[bot]"
@@ -117,7 +109,7 @@ jobs:
           RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           python3 << 'EOF'
-          import json, os, urllib.request
+          import json, os
 
           webhook_url = os.environ.get('DISCORD_STAGING_WEBHOOK_URL', '')
           if not webhook_url:
@@ -150,11 +142,12 @@ jobs:
               }]
           }
 
-          data = json.dumps(payload).encode('utf-8')
-          req = urllib.request.Request(
-              webhook_url, data=data,
-              headers={'Content-Type': 'application/json'}
-          )
-          with urllib.request.urlopen(req) as r:
-              print(f"Discord: {r.status}")
+          payload_json = json.dumps(payload)
+
+          with open('/tmp/discord_payload.json', 'w') as f:
+              f.write(payload_json)
           EOF
+
+          curl -X POST "$DISCORD_STAGING_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d @/tmp/discord_payload.json

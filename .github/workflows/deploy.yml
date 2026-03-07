@@ -139,10 +139,9 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           VERSION: ${{ steps.info.outputs.version }}
           REPO: ${{ github.repository }}
-          RELEASE_URL: https://github.com/${{ github.repository }}/releases/tag/v${{ steps.info.outputs.version }}
         run: |
           python3 << 'EOF'
-          import json, os, urllib.request
+          import json, os
 
           webhook_url = os.environ.get('DISCORD_WEBHOOK_URL', '')
           if not webhook_url:
@@ -151,7 +150,6 @@ jobs:
 
           version     = os.environ['VERSION']
           repo        = os.environ['REPO']
-          release_url = os.environ['RELEASE_URL']
           script_name = repo.split('/')[-1]
 
           with open('/tmp/changelog_body.txt', 'r', encoding='utf-8') as f:
@@ -168,11 +166,6 @@ jobs:
                   "color": 3066993,
                   "fields": [
                       {
-                          "name": "📥 Download",
-                          "value": f"[GitHub Release]({release_url})",
-                          "inline": False
-                      },
-                      {
                           "name": "⚠️ Config Changes",
                           "value": "Check the changelog above for any `config.lua` changes needed.",
                           "inline": False
@@ -182,11 +175,12 @@ jobs:
               }]
           }
 
-          data = json.dumps(payload).encode('utf-8')
-          req = urllib.request.Request(
-              webhook_url, data=data,
-              headers={'Content-Type': 'application/json'}
-          )
-          with urllib.request.urlopen(req) as r:
-              print(f"Discord: {r.status}")
+          payload_json = json.dumps(payload)
+
+          with open('/tmp/discord_payload.json', 'w') as f:
+              f.write(payload_json)
           EOF
+
+          curl -X POST "$DISCORD_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -d @/tmp/discord_payload.json

@@ -30,7 +30,7 @@ def collect_fragments():
 
     if not files:
         print("ERROR: No changelog fragments found in .changelog/fragments/")
-        print("Did you forget to run add-fragment.sh before merging your feature PRs?")
+        print("Did you forget to fill in the Changelog section in your feature PR descriptions?")
         sys.exit(1)
 
     for filepath in files:
@@ -45,7 +45,7 @@ def collect_fragments():
             print(f"WARNING: Unknown fragment type '{ftype}' in {filename}, skipping")
             continue
 
-        with open(filepath, 'r') as f:
+        with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read().strip()
 
         for line in content.split('\n'):
@@ -82,12 +82,11 @@ def update_changelog(version, entry):
     with open(CHANGELOG_FILE, 'r', encoding='utf-8', newline='') as f:
         content = f.read()
 
-    # Normalize line endings
     content = content.replace('\r\n', '\n').replace('\r', '\n')
 
     if MARKER not in content:
         print(f"ERROR: Marker not found in {CHANGELOG_FILE}")
-        print(f"CHANGELOG.md must contain exactly: {MARKER.strip()}")
+        print(f"CHANGELOG.md must contain exactly: {MARKER}")
         sys.exit(1)
 
     if f'## [{version}]' in content:
@@ -95,7 +94,7 @@ def update_changelog(version, entry):
         print("Bump the version number.")
         sys.exit(1)
 
-    new_content = content.replace(MARKER, MARKER + '\n' + entry + '\n')
+    new_content = content.replace(MARKER, MARKER + '\n\n' + entry)
 
     with open(CHANGELOG_FILE, 'w', encoding='utf-8', newline='\n') as f:
         f.write(new_content)
@@ -110,8 +109,10 @@ def delete_fragments():
         print(f"  Deleted: {f}")
 
 def extract_entry_for_version(version):
-    with open(CHANGELOG_FILE, 'r') as f:
+    with open(CHANGELOG_FILE, 'r', encoding='utf-8', newline='') as f:
         content = f.read()
+
+    content = content.replace('\r\n', '\n').replace('\r', '\n')
 
     match = re.search(
         rf'(## \[{re.escape(version)}\].*?)(?=\n## \[|\Z)',
@@ -143,7 +144,7 @@ if __name__ == '__main__':
         f.write(version)
 
     full_entry = extract_entry_for_version(version)
-    with open('/tmp/changelog_body.txt', 'w') as f:
+    with open('/tmp/changelog_body.txt', 'w', encoding='utf-8') as f:
         f.write(full_entry)
 
     print("\nDone.")

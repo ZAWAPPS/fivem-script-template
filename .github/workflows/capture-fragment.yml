@@ -1,0 +1,112 @@
+name: Capture Changelog Fragment
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - develop
+
+jobs:
+  capture:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract and commit changelog fragment
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          python3 << 'EOF'
+          import os, re, subprocess
+
+          pr_body   = os.environ.get('PR_BODY', '').strip()
+          pr_number = os.environ.get('PR_NUMBER', '0')
+          pr_branch = os.environ.get('PR_BRANCH', f'pr-{pr_number}')
+
+          match = re.search(
+              r'## Changelog\s*\n(.*?)(?=\n## |\Z)',
+              pr_body, re.DOTALL
+          )
+
+          if not match:
+              print("No ## Changelog section found — skipping fragment creation")
+              exit(0)
+
+          raw = match.group(1)
+          cleaned = re.sub(r'<!--.*?-->', '', raw, flags=re.DOTALL)
+
+          sections = {}
+          current_type = None
+          type_map = {
+              'added':          'added',
+              'changed':        'changed',
+              'fixed':          'fixed',
+              'removed':        'removed',
+              'config changes': 'config',
+          }
+
+          for line in cleaned.split('\n'):
+              heading = re.match(r'^###\s+(.+)', line)
+              if heading:
+                  key = heading.group(1).strip().lower()
+                  current_type = type_map.get(key)
+                  continue
+
+              if current_type:
+                  bullet = line.strip()
+                  if not bullet or bullet == '-':
+                      continue
+                  if bullet.lower() in ('none', '- none'):
+                      continue
+                  bullet = re.sub(r'^-\s*', '', bullet).strip()
+                  if bullet and bullet.lower() != 'none':
+                      if current_type not in sections:
+                          sections[current_type] = []
+                      sections[current_type].append(bullet)
+
+          if not sections:
+              print("Changelog section found but no content — skipping")
+              exit(0)
+
+          safe_name = re.sub(r'[^a-zA-Z0-9\-_]', '-', pr_branch.replace('feature/', ''))
+          safe_name = re.sub(r'-+', '-', safe_name).strip('-')
+          if not safe_name:
+              safe_name = f'pr-{pr_number}'
+
+          os.makedirs('.changelog/fragments', exist_ok=True)
+          created = []
+
+          for ftype, bullets in sections.items():
+              filename = f'.changelog/fragments/{safe_name}-{pr_number}.{ftype}.md'
+              content  = '\n'.join(f'- {b}' for b in bullets)
+              with open(filename, 'w') as f:
+                  f.write(content + '\n')
+              created.append(filename)
+              print(f"Created: {filename}")
+              print(content)
+
+          if not created:
+              print("No fragments created")
+              exit(0)
+
+          subprocess.run(['git', 'config', 'user.name',  'github-actions[bot]'], check=True)
+          subprocess.run(['git', 'config', 'user.email', 'github-actions[bot]@users.noreply.github.com'], check=True)
+          subprocess.run(['git', 'add'] + created, check=True)
+          subprocess.run(['git', 'commit', '-m',
+              f'chore: changelog fragment for #{pr_number} [skip ci]'
+          ], check=True)
+          subprocess.run(['git', 'push', 'origin', 'develop'], check=True)
+          print("Fragment committed to develop")
+          EOF
