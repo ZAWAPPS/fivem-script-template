@@ -48,6 +48,9 @@ gh secret set DISCORD_WEBHOOK_URL --body "$DISCORD_WEBHOOK"
 gh secret set DISCORD_STAGING_WEBHOOK_URL --body "$DISCORD_STAGING_WEBHOOK"
 echo "Secrets set."
 
+git checkout main
+git push origin main --force
+
 echo ""
 echo "✅ $REPO is ready."
 echo ""

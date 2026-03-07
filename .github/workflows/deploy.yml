@@ -104,7 +104,7 @@ jobs:
       - name: Update fxmanifest version
         run: |
           VERSION=${{ steps.info.outputs.version }}
-          sed -i "s/version '[^']*'/version '$VERSION'/" dist/fxmanifest.lua
+          sed -i "s/^version '[^']*'/version '$VERSION'/" dist/fxmanifest.lua
           echo "Updated fxmanifest.lua to version $VERSION"
 
       - name: Package zip
