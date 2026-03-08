@@ -16,10 +16,28 @@ def run_cmd(cmd):
     return result.stdout.strip()
 
 def get_last_tag():
-    tag = run_cmd(['git', 'describe', '--tags', '--abbrev=0'])
+    tag = run_cmd(['git', 'describe', '--tags', '--abbrev=0'])        
     if not tag:
-        tag = run_cmd(['git', 'rev-list', '--max-parents=0', 'HEAD'])
+        tag = run_cmd(['git', 'rev-list', '--max-parents=0', 'HEAD']) 
     return tag
+
+def extract_changelog(pr_body):
+    if not pr_body: return None
+    match = re.search(r'## Changelog\s*\n(.*?)(?=\n## |\Z)', pr_body, re.DOTALL)
+    if not match: return None
+
+    # Remove HTML comments (<!-- ... -->)
+    content = re.sub(r'<!--.*?-->', '', match.group(1), flags=re.DOTALL).strip()
+    if not content or content.lower() == 'none' or content == '- ...': return None
+
+    lines = []
+    for line in content.split('\n'):
+        line = line.strip()
+        if not line: continue
+        if not line.startswith('- '): line = f'- {line}'
+        lines.append(line)
+
+    return '\n'.join(lines)
 
 def get_merged_prs(last_tag):
     """Gathers PRs merged into main, staging, or develop since the last tag."""
@@ -28,9 +46,8 @@ def get_merged_prs(last_tag):
     if 'GH_TOKEN' not in env and 'GITHUB_TOKEN' in env:
         env['GH_TOKEN'] = env['GITHUB_TOKEN']
 
-    # We fetch a slightly larger limit to ensure we don't miss chain PRs
     for base in ['develop', 'staging', 'main']:
-        cmd = ['gh', 'pr', 'list', '--state', 'merged', '--base', base, '--limit', '1000', '--json', 'number,title,body,mergeCommit']
+        cmd = ['gh', 'pr', 'list', '--state', 'merged', '--base', base, '--limit', '100', '--json', 'number,title,body,mergeCommit']       
         result = subprocess.run(cmd, capture_output=True, text=True, errors='ignore', env=env)
         if result.returncode == 0:
             try:
@@ -40,11 +57,11 @@ def get_merged_prs(last_tag):
 
     # Deduplicate by PR number
     unique_prs_map = {pr['number']: pr for pr in all_prs}
-    
+
     # Identify the cutoff timestamp from the last tag
     try:
         tag_timestamp = run_cmd(['git', 'log', '-1', '--format=%at', last_tag])
-        is_initial = len(last_tag) >= 40 
+        is_initial = len(last_tag) >= 40
     except:
         tag_timestamp = "0"
         is_initial = True
@@ -55,49 +72,38 @@ def get_merged_prs(last_tag):
     for pr_num in sorted(unique_prs_map.keys()):
         pr = unique_prs_map[pr_num]
         if not pr.get('mergeCommit'): continue
-        
+
         merge_commit = pr['mergeCommit']['oid']
         merge_timestamp = run_cmd(['git', 'log', '-1', '--format=%at', merge_commit])
-        
+
         if is_initial or (merge_timestamp and int(merge_timestamp) > int(tag_timestamp)):
-            # Skip PRs that are just automated syncs if they don't have unique notes
-            if "sync main to" in pr['title'].lower() or "sync develop to" in pr['title'].lower():
-                notes = extract_changelog(pr['body'])
-                if not notes or notes.lower() == 'none':
-                    continue
+            # Determine if this PR has unique notes
+            notes = extract_changelog(pr['body'])
+            is_sync = any(term in pr['title'].lower() for term in ["sync ", "merge branch", "merge develop", "merge staging"])
+            
+            # If it's a sync PR with no unique notes, skip it to avoid duplication
+            if is_sync and not notes:
+                continue
+                
             final_prs.append(pr)
 
     return final_prs
 
-def extract_changelog(pr_body):
-    if not pr_body: return None
-    match = re.search(r'## Changelog\s*\n(.*?)(?=\n## |\Z)', pr_body, re.DOTALL)
-    if not match: return None
-    
-    # Remove HTML comments (<!-- ... -->)
-    content = re.sub(r'<!--.*?-->', '', match.group(1), flags=re.DOTALL).strip()
-    if not content or content.lower() == 'none': return None
-        
-    lines = []
-    for line in content.split('\n'):
-        line = line.strip()
-        if not line: continue
-        if not line.startswith('- '): line = f'- {line}'
-        lines.append(line)
-    
-    return '\n'.join(lines)
-
 def build_full_changelog(version, prs):
     today = date.today().strftime('%Y-%m-%d')
     entry = [f'## [{version}] - {today}', '']
-    
+
     seen_notes = set()
     found_any = False
-    
+
     for pr in prs:
         notes = extract_changelog(pr['body'])
-        if notes and notes not in seen_notes:
-            entry.append(f'#### PR #{pr["number"]}: {pr["title"]}')
+        if notes:
+            # Check if this exact note block has been seen (to avoid repetition in sync PRs)
+            if notes in seen_notes:
+                continue
+            
+            entry.append(f'#### PR #{pr["number"]}: {pr["title"]}')   
             entry.append(notes)
             entry.append('')
             seen_notes.add(notes)
@@ -114,7 +120,6 @@ def update_manifest(version):
     with open(MANIFEST_FILE, 'r', encoding='utf-8', errors='ignore') as f:
         content = f.read()
     
-    # Quote-agnostic replacement
     new_content = re.sub(
         r"^(\s*version\s+)(['\"])[^'\"]*(['\"])", 
         r"\1\2" + version + r"\3", 
@@ -150,8 +155,9 @@ def update_changelog_file(version, entry):
         f.write(new_content)
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2: sys.exit(1)
-    version = sys.argv[1].lstrip('v')
+    version = "0.0.0"
+    if len(sys.argv) >= 2:
+        version = sys.argv[1].lstrip('v')
     
     last_tag = get_last_tag()
     prs = get_merged_prs(last_tag)

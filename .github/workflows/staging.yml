@@ -23,6 +23,7 @@ jobs:
         id: info
         env:
           PR_BODY: "${{ github.event.pull_request.body || 'VERSION: 1.0.0' }}"
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: |
           # Flexible Regex for SemVer (X.Y.Z) from PR body
           VERSION=$(echo "$PR_BODY" | grep -ioP '(?m)^[*-]?\s*VERSION\s*:\s*[vV]?\K\d+\.\d+\.\d+' | head -1)
@@ -30,26 +31,28 @@ jobs:
             VERSION="staging-$(date +'%Y%m%d%H%M')"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          
+
           # Quote-agnostic SCRIPT_NAME extraction
           SCRIPT_NAME=$(grep -ioP "name\s+['\"]\K[^'\"]+" fxmanifest.lua | head -1 | tr ' ' '-')
           [ -z "$SCRIPT_NAME" ] && SCRIPT_NAME=${{ github.event.repository.name }}
           echo "script_name=$SCRIPT_NAME" >> $GITHUB_OUTPUT
 
-          # Extract changelog for Discord notification
-          python3 << 'EOF'
-          import os, re
-          body = os.environ.get('PR_BODY', '')
-          match = re.search(r'## Changelog\s*\n(.*?)(?=\n## |\Z)', body, re.DOTALL)
-          if match:
-              # Remove HTML comments (<!-- ... -->)
-              notes = re.sub(r'<!--.*?-->', '', match.group(1), flags=re.DOTALL).strip()
-          else:
-              notes = "No changelog provided."
-          with open('staging_notes.txt', 'w') as f: f.write(notes)
-          EOF
+          # Generate aggregated notes using release_engine in DRY_RUN mode
+          DRY_RUN=true python3 .github/scripts/release_engine.py 0.0.0 > staging_notes.txt
+
+          # If staging_notes.txt is mostly empty (default release header), fallback to current PR body
+          if [ $(wc -l < staging_notes.txt) -le 4 ]; then
+             python3 << 'EOF'
+      import os, re
+      body = os.environ.get('PR_BODY', '')
+      match = re.search(r'## Changelog\s*\n(.*?)(?=\n## |\Z)', body, re.DOTALL)
+      notes = re.sub(r'<!--.*?-->', '', match.group(1), flags=re.DOTALL).strip() if match else "No granular changes detected."
+      with open('staging_notes.txt', 'w') as f: f.write(notes)
+      EOF
+          fi
 
       - name: Build NUI
+
         run: |
           if [ -f "web/package.json" ]; then
             echo "Building NUI..."

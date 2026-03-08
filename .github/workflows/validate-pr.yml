@@ -69,13 +69,15 @@ jobs:
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
           TARGET_BRANCH: ${{ github.base_ref }}
+          SOURCE_BRANCH: ${{ github.head_ref }}
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: |
           python3 << 'EOF'
-          import os, re, sys, subprocess
+          import os, re, sys, subprocess, json
 
           def get_manifest_version(branch='HEAD'):
               try:
-                  cmd = ['git', 'show', f'{branch}:fxmanifest.lua']
+                  cmd = ['git', 'show', f'{branch}:fxmanifest.lua']   
                   content = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode('utf-8')
                   match = re.search(r"^\s*version\s+['\"]([^'\"]*)['\"]", content, re.M)
                   return match.group(1) if match else "0.0.0"
@@ -90,39 +92,66 @@ jobs:
                   return n > o
               except: return False
 
+          def get_recent_prs():
+              try:
+                  cmd = ['git', 'describe', '--tags', '--abbrev=0']
+                  tag = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode('utf-8').strip()
+              except:
+                  tag = subprocess.check_output(['git', 'rev-list', '--max-parents=0', 'HEAD']).decode('utf-8').strip()
+
+              all_prs = []
+              for base in ['develop', 'staging']:
+                  cmd = ['gh', 'pr', 'list', '--state', 'merged', '--base', base, '--limit', '20', '--json', 'number,title,body']
+                  res = subprocess.check_output(cmd).decode('utf-8')
+                  all_prs.extend(json.loads(res))
+              return all_prs
+
           body = os.environ.get('PR_BODY', '')
           target = os.environ.get('TARGET_BRANCH', '')
-          
-          current_v = get_manifest_version('origin/main')
-          if current_v == "0.0.0": current_v = get_manifest_version('HEAD')
+          source = os.environ.get('SOURCE_BRANCH', '')
 
           c_regex = r'## Changelog\s*\n(.*?)(?=\n## |\Z)'
           c_match = re.search(c_regex, body, re.DOTALL)
+
           if not c_match:
               print("❌ Error: All PRs must include a '## Changelog' section.")
               sys.exit(1)
-          
+
           content = re.sub(r'<!--.*?-->', '', c_match.group(1), flags=re.DOTALL).strip()
-          if not content or content.lower() == 'none' or content == '- ...':
-              print("❌ Error: The '## Changelog' section cannot be empty.")
+          is_empty = not content or content.lower() == 'none' or content == '- ...'
+
+          # RULE: If merging develop to staging or staging to main, we allow 'None' 
+          # IF there are other PRs that already provide the history.
+          if (target == 'staging' and source == 'develop') or (target == 'main' and source == 'staging'):
+              if is_empty:
+                  recent = get_recent_prs()
+                  if not recent:
+                      print(f"❌ Error: This sync PR ({source} -> {target}) has no unique changelog AND no recent feature PRs were found. Please provide a summary of your direct-to-branch changes.")
+                      sys.exit(1)
+                  else:
+                      print(f"✅ Sync PR: Found {len(recent)} recent child PRs. Minimal changelog accepted.")
+          elif is_empty:
+              print(f"❌ Error: The '## Changelog' section cannot be empty for {source} -> {target} PRs.")
               sys.exit(1)
 
           if target == 'main':
+              current_v = get_manifest_version('origin/main')
+              if current_v == "0.0.0": current_v = get_manifest_version('HEAD')
+
               v_regex = r'(?m)^[*-]?\s*VERSION:\s*[vV]?(\d+\.\d+\.\d+)'
               v_match = re.search(v_regex, body)
-              
+
               if not v_match:
-                  print("❌ Error: Release PRs to 'main' must specify a version.")
+                  print("❌ Error: Release PRs to 'main' must specify a version (e.g. VERSION: 1.0.1).")
                   sys.exit(1)
-              
+
               new_v = v_match.group(1).strip()
               if not is_higher(new_v, current_v):
                   print(f"❌ Error: Version ({new_v}) must be higher than production ({current_v}).")
                   sys.exit(1)
-              
+
           print("✅ PR body validation successful")
           EOF
-
       - name: 💬 Post Luacheck Findings
         if: always()
         uses: actions/github-script@v7
