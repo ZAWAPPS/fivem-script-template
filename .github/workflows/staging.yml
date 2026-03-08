@@ -3,146 +3,147 @@ name: Staging Build
 on:
   pull_request:
     types: [closed]
-    branches:
-      - staging
+    branches: [staging]
+  workflow_dispatch:
 
 jobs:
   staging-build:
-    if: github.event.pull_request.merged == true
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version from PR body
+      - name: Extract info
         id: info
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BODY: ${{ github.event.pull_request.body || 'VERSION: 1.0.0' }}
         run: |
-          VERSION=$(echo "$PR_BODY" | grep -oP '^VERSION:\s*\K[\d.]+' | head -1)
+          # Flexible Regex for SemVer (X.Y.Z) from PR body
+          VERSION=$(echo "$PR_BODY" | grep -ioP '(?m)^[*-]?\s*VERSION\s*:\s*[vV]?\K\d+\.\d+\.\d+' | head -1)
           if [ -z "$VERSION" ]; then
-            echo "❌ Could not extract VERSION from PR body"
-            exit 1
+            VERSION="staging-$(date +'%Y%m%d%H%M')"
           fi
-          VERSION=$(echo "$VERSION" | sed 's/^v//')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Detected version: $VERSION"
+          
+          # Quote-agnostic SCRIPT_NAME extraction
+          SCRIPT_NAME=$(grep -ioP "name\s+['\"]\K[^'\"]+" fxmanifest.lua | head -1 | tr ' ' '-')
+          [ -z "$SCRIPT_NAME" ] && SCRIPT_NAME=${{ github.event.repository.name }}
+          echo "script_name=$SCRIPT_NAME" >> $GITHUB_OUTPUT
 
-      - name: Build changelog
-        run: |
-          python3 .github/scripts/build-changelog.py ${{ steps.info.outputs.version }}
+          # Extract changelog for Discord notification
+          python3 << 'EOF'
+          import os, re
+          body = os.environ.get('PR_BODY', '')
+          match = re.search(r'## Changelog\s*\n(.*?)(?=\n## |\Z)', body, re.DOTALL)
+          notes = match.group(1).strip() if match else "No changelog provided."
+          with open('staging_notes.txt', 'w') as f: f.write(notes)
+          EOF
 
-      - name: Commit changelog and deleted fragments
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add CHANGELOG.md .changelog/fragments/
-          git commit -m "chore: changelog for v${{ steps.info.outputs.version }} [skip ci]" || echo "Nothing to commit"
-          git push origin staging --force
-
-      - name: Install and build NUI
+      - name: Build NUI
         run: |
           if [ -f "web/package.json" ]; then
             echo "Building NUI..."
-            cd web && npm install && npm run build && cd ..
+            cd web
+            npm ci || npm install
+            npm run build
           else
-            echo "No NUI found, skipping"
+            echo "No NUI found, skipping build."
           fi
 
-      - name: Build script
+      - name: Package Resource
         run: |
-          mkdir -p dist
+          SCRIPT_NAME=${{ steps.info.outputs.script_name }}
+          STAGING_VER="${{ steps.info.outputs.version }}-staging"
+          
+          mkdir -p "package/$SCRIPT_NAME"
           rsync -av \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='.changelog' \
-            --exclude='*.zip' \
-            --exclude='.gitignore' \
-            --exclude='README.md' \
+            --exclude='.*' \
+            --exclude='/dist' \
+            --exclude='/package' \
             --exclude='node_modules' \
             --exclude='web/src' \
             --exclude='web/public' \
-            --exclude='web/node_modules' \
-            --exclude='web/.gitignore' \
-            --exclude='web/eslint.config.*' \
-            --exclude='web/index.html' \
+            --exclude='web/tsconfig*' \
+            --exclude='web/vite.config*' \
+            --exclude='web/eslint*' \
             --exclude='web/package.json' \
             --exclude='web/package-lock.json' \
-            --exclude='web/vite.config.*' \
-            --exclude='web/tsconfig.*' \
-            ./ dist/
-          echo "Build contents:"
-          ls -la dist/
-
-      - name: Update fxmanifest version
-        run: |
-          VERSION=${{ steps.info.outputs.version }}
-          sed -i "s/version '[^']*'/version '$VERSION'/" dist/fxmanifest.lua
-          echo "Updated fxmanifest.lua to version $VERSION"
-
+            --exclude='.github/' \
+            --exclude='*.py' \
+            ./ "package/$SCRIPT_NAME/"
+          
+          # Plug-and-Play Config: Ensure a config.lua exists for internal testing
+          find "package/$SCRIPT_NAME" -name "*.dist.lua" | while read dist_file; do
+            lua_file="${dist_file%.dist.lua}.lua"
+            if [ ! -f "$lua_file" ]; then
+              cp "$dist_file" "$lua_file"
+              echo "Created $lua_file from $dist_file for internal testing."
+            fi
+            rm "$dist_file"
+          done
+          
+          # Update version in manifest for staging identification (quote agnostic)
+          sed -i -E "s/^([[:space:]]*version[[:space:]]+)(['\"])[^'\"]*(['\"])/\1\2$STAGING_VER\3/" "package/$SCRIPT_NAME/fxmanifest.lua"
+          
       - name: Package zip
         run: |
           VERSION=${{ steps.info.outputs.version }}
-          SCRIPT_NAME=${{ github.event.repository.name }}
-          cd dist && zip -r "../${SCRIPT_NAME}-v${VERSION}-staging.zip" . && cd ..
-          echo "Created: ${SCRIPT_NAME}-v${VERSION}-staging.zip"
+          SCRIPT_NAME=${{ steps.info.outputs.script_name }}
+          cd package && zip -r "../${SCRIPT_NAME}-v${VERSION}-staging.zip" "$SCRIPT_NAME" && cd ..
 
       - name: Upload staging artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event.repository.name }}-v${{ steps.info.outputs.version }}-staging
-          path: ${{ github.event.repository.name }}-v${{ steps.info.outputs.version }}-staging.zip
-          retention-days: 30
+          name: staging-build
+          path: "*.zip"
+          retention-days: 3
 
       - name: Notify Discord staging
         env:
           DISCORD_STAGING_WEBHOOK_URL: ${{ secrets.DISCORD_STAGING_WEBHOOK_URL }}
           VERSION: ${{ steps.info.outputs.version }}
           REPO: ${{ github.repository }}
-          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           python3 << 'EOF'
-          import json, os
+          import json, os, urllib.request, re
+          webhook = os.environ.get('DISCORD_STAGING_WEBHOOK_URL', '')
+          if not webhook: exit(0)
+          
+          repo_name = os.environ['REPO'].split('/')[-1]
+          display_name = repo_name # Default
+          if os.path.exists('fxmanifest.lua'):
+              with open('fxmanifest.lua', 'r') as f:
+                  m = re.search(r"name\s+['\"]([^'\"]+)['\"]", f.read())
+                  if m: 
+                      repo_name = m.group(1)
+                      display_name = m.group(1)
 
-          webhook_url = os.environ.get('DISCORD_STAGING_WEBHOOK_URL', '')
-          if not webhook_url:
-              print("No staging webhook configured, skipping")
-              exit(0)
-
-          version     = os.environ['VERSION']
-          repo        = os.environ['REPO']
-          run_url     = os.environ['RUN_URL']
-          script_name = repo.split('/')[-1]
-
-          with open('/tmp/changelog_body.txt', 'r', encoding='utf-8') as f:
-              changelog = f.read().strip()
-
-          if len(changelog) > 3800:
-              changelog = changelog[:3800] + '\n\n*...see CHANGELOG.md for full notes*'
+          notes = "New internal build ready for testing."
+          if os.path.exists('staging_notes.txt'):
+              with open('staging_notes.txt', 'r') as f:
+                  notes = f.read().strip()
+          
+          if len(notes) > 1500: notes = notes[:1490] + "..."
 
           payload = {
-              "username": "Staging Build",
+              "username": display_name,
               "embeds": [{
-                  "title": f"🔧 {script_name} — v{version} Staging Build",
-                  "description": changelog or "No changelog entries found.",
-                  "color": 16776960,
-                  "footer": {"text": f"Staging • v{version} — not yet released"}
+                  "title": f"🔧 Staging Build: {repo_name}",
+                  "description": f"**Version:** v{os.environ['VERSION']}\n\n**Changes:**\n{notes}",
+                  "color": 15844367,
+                  "footer": {"text": "Automated Staging Build"}
               }]
           }
-
-          payload_json = json.dumps(payload)
-
-          with open('/tmp/discord_payload.json', 'w') as f:
-              f.write(payload_json)
+          
+          req = urllib.request.Request(webhook, data=json.dumps(payload).encode('utf-8'), 
+                                     headers={'Content-Type': 'application/json'}, method='POST')
+          try:
+              with urllib.request.urlopen(req) as resp: pass
+          except Exception as e: print(f"Error notifying Discord: {e}")
           EOF
-
-          curl -X POST "$DISCORD_STAGING_WEBHOOK_URL" \
-            -H "Content-Type: application/json" \
-            -d @/tmp/discord_payload.json

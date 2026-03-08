@@ -1,39 +1,24 @@
-## What does this PR do?
+## PR Type
+- [ ] Feature
+- [ ] Bug Fix
+- [ ] Documentation
+- [ ] Configuration Change
 
-<!-- Brief description -->
+## Version Info
+<!-- REQUIRED FOR RELEASES TO MAIN. Format: VERSION: 1.2.3 -->
+VERSION: 1.0.0
 
 ## Changelog
+<!-- REQUIRED FOR ALL PRs. These will be automatically added to the CHANGELOG.md -->
+- Added: ...
+- Fixed: ...
+- Changed: ...
 
-<!--
-Fill in any sections that apply. Delete the ones that don't.
-Write for your customers. Be specific.
-"Fixed crash" is bad. "Fixed server crash when player disconnects during a transaction" is good.
-Leave sections empty if not applicable — they will be ignored.
--->
+## Description
+Briefly describe the changes in this PR.
 
-### Added
--
-
-### Changed
--
-
-### Fixed
--
-
-### Removed
--
-
-### Config Changes
-<!-- List any new or changed config options customers need to add to their config.lua -->
-- None
-
-## Closes
-<!-- If this closes a GitHub issue, write "Closes #12". Otherwise delete this. -->
-
-## Release Version
-<!--
-ONLY fill this in if this is a release PR (targeting staging or main).
-Format must be exactly: X.Y.Z — example: 1.2.0
-Leave blank for feature PRs.
--->
-VERSION:
+## Checklist
+- [ ] My code follows the style guidelines of this project
+- [ ] I have performed a self-review of my own code
+- [ ] My changes generate no new warnings (luacheck)
+- [ ] Config changes are synced to .dist.lua files

@@ -3,134 +3,167 @@ name: Build and Release
 on:
   pull_request:
     types: [closed]
-    branches:
-      - main
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   build-and-release:
-    if: github.event.pull_request.merged == true
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
-
     permissions:
       contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
 
-      - name: Extract version from PR body
+      - name: Extract info
         id: info
         env:
-          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BODY: ${{ github.event.pull_request.body || 'VERSION: 1.0.0' }}
         run: |
-          VERSION=$(echo "$PR_BODY" | grep -oP '^VERSION:\s*\K[\d.]+' | head -1)
+          # Flexible Regex for SemVer (X.Y.Z) from PR Body
+          VERSION=$(echo "$PR_BODY" | grep -ioP '(?m)^[*-]?\s*VERSION\s*:\s*[vV]?\K\d+\.\d+\.\d+' | head -1)
+          
+          # If manual dispatch or missing in PR, fallback to manifest
           if [ -z "$VERSION" ]; then
-            echo "❌ Could not extract VERSION from PR body"
+            # Quote-agnostic extraction from fxmanifest
+            VERSION=$(grep -ioP "version\s+['\"]\K[^'\"]+" fxmanifest.lua | head -1)
+          fi
+
+          if [ -z "$VERSION" ]; then
+            echo "❌ Error: Could not extract version."
             exit 1
           fi
-          VERSION=$(echo "$VERSION" | sed 's/^v//')
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Detected version: $VERSION"
+          
+          # Quote-agnostic SCRIPT_NAME extraction
+          SCRIPT_NAME=$(grep -ioP "name\s+['\"]\K[^'\"]+" fxmanifest.lua | head -1 | tr ' ' '-')
+          [ -z "$SCRIPT_NAME" ] && SCRIPT_NAME=${{ github.event.repository.name }}
+          echo "script_name=$SCRIPT_NAME" >> $GITHUB_OUTPUT
 
-      - name: Read changelog entry
-        run: |
-          python3 << 'PYEOF'
-          import re
-
-          with open('CHANGELOG.md', 'r', encoding='utf-8', newline='') as f:
-              content = f.read()
-
-          content = content.replace('\r\n', '\n').replace('\r', '\n')
-          version = '${{ steps.info.outputs.version }}'
-
-          match = re.search(
-              rf'(## \[{re.escape(version)}\].*?)(?=\n## \[|\Z)',
-              content, re.DOTALL
-          )
-
-          entry = match.group(1).strip() if match else f'See CHANGELOG.md for v{version} details.'
-
-          with open('/tmp/changelog_body.txt', 'w', encoding='utf-8') as f:
-              f.write(entry)
-
-          print("Changelog entry found:")
-          print(entry)
-          PYEOF
-
-      - name: Tag the release
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag v${{ steps.info.outputs.version }} 2>/dev/null || echo "Tag already exists, skipping"
-          git push origin v${{ steps.info.outputs.version }} 2>/dev/null || echo "Tag already on remote, skipping"
-
-      - name: Install and build NUI
+      - name: Build NUI
         run: |
           if [ -f "web/package.json" ]; then
             echo "Building NUI..."
-            cd web && npm install && npm run build && cd ..
+            cd web
+            npm ci || npm install
+            npm run build
           else
-            echo "No NUI found, skipping"
+            echo "No NUI found, skipping build."
           fi
 
-      - name: Build script
+      - name: Generate Release Assets (Manifest & Changelog)
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        run: python3 .github/scripts/release_engine.py ${{ steps.info.outputs.version }}
+
+      - name: Commit and Push
         run: |
-          mkdir -p dist
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add fxmanifest.lua CHANGELOG.md
+          git commit -m "chore: release v${{ steps.info.outputs.version }} [skip ci]" || echo "Nothing to commit"
+          git push origin main
+
+      - name: Tag the release
+        run: |
+          git tag v${{ steps.info.outputs.version }}
+          git push origin v${{ steps.info.outputs.version }}
+
+      - name: Sync Main to Develop and Staging
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          # We need to fetch all branches
+          git fetch origin develop staging
+          
+          for branch in develop staging; do
+            echo "Attempting to sync main back to $branch..."
+            git checkout $branch
+            if git merge origin/main --no-edit; then
+              git push origin $branch
+              echo "✅ Successfully synced main to $branch"
+            else
+              echo "⚠️ Conflicts detected syncing to $branch. Creating Sync PR..."
+              git merge --abort
+              
+              # Check if a sync PR already exists to avoid spam
+              EXISTING_PR=$(gh pr list --base $branch --head main --state open --json number -q '.[0].number')
+              if [ -z "$EXISTING_PR" ]; then
+                gh pr create \
+                  --base $branch \
+                  --head main \
+                  --title "chore: sync main to $branch (Manual Resolution Required)" \
+                  --body "Automated sync from \`main\` failed due to conflicts. This usually happens after a Hotfix. Please resolve manually to keep branches in sync."
+              else
+                echo "Sync PR already exists: #$EXISTING_PR"
+              fi
+            fi
+          done
+          # Switch back to main for packaging steps
+          git checkout main
+
+      - name: Package Resource
+        run: |
+          VERSION=${{ steps.info.outputs.version }}
+          SCRIPT_NAME=${{ steps.info.outputs.script_name }}
+          
+          # Create a temporary staging area for the zip to include a root folder
+          mkdir -p "package/$SCRIPT_NAME"
+          
+          # Package logic: Exclude source files, include built assets, exclude internal dev files
           rsync -av \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='.changelog' \
-            --exclude='*.zip' \
-            --exclude='.gitignore' \
-            --exclude='README.md' \
+            --exclude='.*' \
+            --exclude='/dist' \
+            --exclude='/package' \
             --exclude='node_modules' \
             --exclude='web/src' \
             --exclude='web/public' \
-            --exclude='web/node_modules' \
-            --exclude='web/.gitignore' \
-            --exclude='web/eslint.config.*' \
-            --exclude='web/index.html' \
+            --exclude='web/tsconfig*' \
+            --exclude='web/vite.config*' \
+            --exclude='web/eslint*' \
             --exclude='web/package.json' \
             --exclude='web/package-lock.json' \
-            --exclude='web/vite.config.*' \
-            --exclude='web/tsconfig.*' \
-            ./ dist/
-          echo "Build contents:"
-          ls -la dist/
+            --exclude='.github/' \
+            --exclude='.luacheckrc' \
+            --exclude='.gitattributes' \
+            --exclude='.gitignore' \
+            --exclude='*.py' \
+            ./ "package/$SCRIPT_NAME/"
+          
+          # Plug-and-Play Config Handling
+          find "package/$SCRIPT_NAME" -name "*.dist.lua" | while read dist_file; do
+            lua_file="${dist_file%.dist.lua}.lua"
+            if [ ! -f "$lua_file" ]; then
+              cp "$dist_file" "$lua_file"
+              echo "Created $lua_file from $dist_file for distribution."
+            fi
+            rm "$dist_file"
+          done
 
-      - name: Update fxmanifest version
-        run: |
-          VERSION=${{ steps.info.outputs.version }}
-          sed -i "s/^version '[^']*'/version '$VERSION'/" dist/fxmanifest.lua
-          echo "Updated fxmanifest.lua to version $VERSION"
+          cd package && zip -r "../${SCRIPT_NAME}-v${VERSION}.zip" "$SCRIPT_NAME" && cd ..
 
-      - name: Package zip
-        run: |
-          VERSION=${{ steps.info.outputs.version }}
-          SCRIPT_NAME=${{ github.event.repository.name }}
-          cd dist && zip -r "../${SCRIPT_NAME}-v${VERSION}.zip" . && cd ..
-          echo "Created: ${SCRIPT_NAME}-v${VERSION}.zip"
+      - name: Upload production artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-build
+          path: "*.zip"
+          retention-days: 7
 
       - name: Create GitHub Release
-        run: |
-          VERSION=${{ steps.info.outputs.version }}
-          SCRIPT_NAME=${{ github.event.repository.name }}
-          if gh release view "v${VERSION}" > /dev/null 2>&1; then
-            echo "Release already exists, updating..."
-            gh release edit "v${VERSION}" \
-              --title "v${VERSION}" \
-              --notes-file /tmp/changelog_body.txt
-            gh release upload "v${VERSION}" "${SCRIPT_NAME}-v${VERSION}.zip" --clobber
-          else
-            echo "Creating new release..."
-            gh release create "v${VERSION}" \
-              --title "v${VERSION}" \
-              --notes-file /tmp/changelog_body.txt \
-              "${SCRIPT_NAME}-v${VERSION}.zip"
-          fi
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.info.outputs.version }}
+          name: v${{ steps.info.outputs.version }}
+          body_path: release_notes.txt
+          files: |
+            *.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -141,46 +174,41 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           python3 << 'EOF'
-          import json, os
-
-          webhook_url = os.environ.get('DISCORD_WEBHOOK_URL', '')
-          if not webhook_url:
-              print("No webhook configured, skipping")
+          import json, os, urllib.request, re
+          webhook = os.environ.get('DISCORD_WEBHOOK_URL', '')
+          if not webhook:
+              print("No Discord webhook URL found. Skipping notification.")
               exit(0)
+          
+          # Try to get a clean display name from fxmanifest
+          display_name = os.environ['REPO'].split('/')[-1]
+          if os.path.exists('fxmanifest.lua'):
+              with open('fxmanifest.lua', 'r') as f:
+                  m = re.search(r"name\s+['\"]([^'\"]+)['\"]", f.read())
+                  if m: display_name = m.group(1)
 
-          version     = os.environ['VERSION']
-          repo        = os.environ['REPO']
-          script_name = repo.split('/')[-1]
-
-          with open('/tmp/changelog_body.txt', 'r', encoding='utf-8') as f:
-              changelog = f.read().strip()
-
-          if len(changelog) > 3800:
-              changelog = changelog[:3800] + '\n\n*...see GitHub release for full notes*'
-
+          notes_path = 'release_notes.txt'
+          notes = ""
+          if os.path.exists(notes_path):
+              with open(notes_path, 'r', encoding='utf-8', errors='ignore') as f:
+                  notes = f.read().strip()
+          
+          if len(notes) > 1900:
+              notes = notes[:1890] + "\n... (notes truncated)"
+          
           payload = {
-              "username": "Script Updates",
+              "username": display_name,
               "embeds": [{
-                  "title": f"📦 {script_name} — v{version} Released",
-                  "description": changelog or "See GitHub release for details.",
+                  "title": f"📦 {display_name} v{os.environ['VERSION']}",
+                  "description": notes or "A new version has been released!",
                   "color": 3066993,
-                  "fields": [
-                      {
-                          "name": "⚠️ Config Changes",
-                          "value": "Check the changelog above for any `config.lua` changes needed.",
-                          "inline": False
-                      }
-                  ],
-                  "footer": {"text": f"v{version} • built automatically on merge"}
+                  "footer": {"text": "v" + os.environ['VERSION'] + " • Automated Release"}
               }]
           }
-
-          payload_json = json.dumps(payload)
-
-          with open('/tmp/discord_payload.json', 'w') as f:
-              f.write(payload_json)
+          
+          req = urllib.request.Request(webhook, data=json.dumps(payload).encode('utf-8'), 
+                                     headers={'Content-Type': 'application/json'}, method='POST')
+          try:
+              with urllib.request.urlopen(req) as resp: pass
+          except Exception as e: print(f"Error notifying Discord: {e}")
           EOF
-
-          curl -X POST "$DISCORD_WEBHOOK_URL" \
-            -H "Content-Type: application/json" \
-            -d @/tmp/discord_payload.json

@@ -1,0 +1,7 @@
+{
+  "name": "nui-template",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "mkdir -p dist && echo '<h1>NUI Template</h1>' > dist/index.html"
+  }
+}

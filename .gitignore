@@ -8,3 +8,5 @@ Thumbs.db
 node_modules/
 web/node_modules/
 web/dist/
+shared/config.lua
+.github/scripts/natives_defs.lua

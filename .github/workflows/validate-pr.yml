@@ -2,11 +2,12 @@ name: Validate PR
 
 on:
   pull_request:
-    branches:
-      - main
-      - staging
-      - develop
+    branches: [main, staging, develop]
     types: [opened, edited, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
   validate:
@@ -16,7 +17,39 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate PR
+      - name: Check GH_PAT Configuration
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.GH_PAT }}" ]; then
+            echo "::warning title=Missing GH_PAT::The GH_PAT secret is not set. Automated branch synchronization will fail after merge."
+            echo "HAS_PAT=false" >> $GITHUB_ENV
+          else
+            echo "HAS_PAT=true" >> $GITHUB_ENV
+          fi
+
+      - name: Sync FiveM Natives (Automated Definitions)
+        run: python3 .github/scripts/sync_natives.py
+
+      - name: Run Luacheck
+        uses: lunarmodules/luacheck-action@v1
+        with:
+          args: '. --no-color --codes --formatter plain'
+
+      - name: Validate NUI Build
+        run: |
+          if [ -f "web/package.json" ]; then
+            echo "Validating NUI build (Strict mode)..."
+            cd web
+            npm ci
+            npm run build
+          else
+            echo "No NUI found, skipping validation."
+          fi
+
+      - name: Run Config Sync Check
+        run: python3 .github/scripts/check_config_sync.py
+
+      - name: Validate PR Body
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
           TARGET_BRANCH: ${{ github.base_ref }}
@@ -24,57 +57,87 @@ jobs:
           python3 << 'EOF'
           import os, re, sys, subprocess
 
-          body          = os.environ.get('PR_BODY', '')
-          target_branch = os.environ.get('TARGET_BRANCH', '')
+          def get_manifest_version(branch='HEAD'):
+              try:
+                  cmd = ['git', 'show', f'{branch}:fxmanifest.lua']
+                  content = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode('utf-8')
+                  match = re.search(r"^\s*version\s+['\"]([^'\"]*)['\"]", content, re.M)
+                  return match.group(1) if match else "0.0.0"
+              except: return "0.0.0"
 
-          if target_branch in ('main', 'staging'):
-              match = re.search(r'^VERSION:\s*(\S+)', body, re.MULTILINE)
+          def is_higher(new, old):
+              try:
+                  n = [int(x) for x in new.split('.')]
+                  o = [int(x) for x in old.split('.')]
+                  while len(n) < 3: n.append(0)
+                  while len(o) < 3: o.append(0)
+                  return n > o
+              except: return False
 
-              if not match:
-                  print("❌ Release PR must contain a VERSION field in the description.")
-                  print("   Add a line that looks exactly like: VERSION: 1.2.0")
+          body = os.environ.get('PR_BODY', '')
+          target = os.environ.get('TARGET_BRANCH', '')
+          
+          current_v = get_manifest_version('origin/main')
+          if current_v == "0.0.0": current_v = get_manifest_version('HEAD')
+
+          c_regex = r'## Changelog\s*\n(.*?)(?=\n## |\Z)'
+          c_match = re.search(c_regex, body, re.DOTALL)
+          if not c_match:
+              print("❌ Error: All PRs must include a '## Changelog' section.")
+              sys.exit(1)
+          
+          content = re.sub(r'<!--.*?-->', '', c_match.group(1), flags=re.DOTALL).strip()
+          if not content or content.lower() == 'none' or content == '- ...':
+              print("❌ Error: The '## Changelog' section cannot be empty.")
+              sys.exit(1)
+
+          if target == 'main':
+              v_regex = r'(?m)^[*-]?\s*VERSION:\s*[vV]?(\d+\.\d+\.\d+)'
+              v_match = re.search(v_regex, body)
+              
+              if not v_match:
+                  print("❌ Error: Release PRs to 'main' must specify a version.")
                   sys.exit(1)
-
-              version = match.group(1).strip().lstrip('v')
-
-              if not re.fullmatch(r'\d+\.\d+\.\d+', version):
-                  print(f"❌ Version '{version}' is not valid.")
-                  print("   Must be exactly X.Y.Z — example: VERSION: 1.2.0")
+              
+              new_v = v_match.group(1).strip()
+              if not is_higher(new_v, current_v):
+                  print(f"❌ Error: Version ({new_v}) must be higher than production ({current_v}).")
                   sys.exit(1)
-
-              result = subprocess.run(
-                  ['git', 'tag', '--list', f'v{version}'],
-                  capture_output=True, text=True
-              )
-              if result.stdout.strip():
-                  print(f"❌ Version v{version} already exists as a git tag.")
-                  print("   Bump the version number.")
-                  sys.exit(1)
-
-              print(f"✅ Version v{version} is valid and unique")
-
-          elif target_branch == 'develop':
-              match = re.search(
-                  r'## Changelog\s*\n(.*?)(?=\n## |\Z)',
-                  body, re.DOTALL
-              )
-              if not match:
-                  print("❌ PR body must contain a '## Changelog' section")
-                  sys.exit(1)
-
-              raw     = match.group(1)
-              cleaned = re.sub(r'<!--.*?-->', '', raw, flags=re.DOTALL)
-              bullets = [
-                  l for l in cleaned.split('\n')
-                  if re.match(r'\s*-\s+\S', l)
-                  and 'none' not in l.lower()
-              ]
-
-              if not bullets:
-                  print("❌ Changelog section is empty — add at least one bullet describing your change")
-                  sys.exit(1)
-
-              print(f"✅ Changelog has {len(bullets)} entr{'y' if len(bullets) == 1 else 'ies'}")
-
-          print("✅ PR is valid")
+              
+          print("✅ PR body validation successful")
           EOF
+
+      - name: 🚨 Handle Failure (Label & Comment)
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo, number } = context.issue;
+            
+            // Add Label
+            try {
+              await github.rest.issues.addLabels({
+                owner, repo, issue_number: number,
+                labels: ['FAILED VALIDATION']
+              });
+            } catch (e) { console.log("Label error:", e); }
+
+            // Post Comment
+            const message = `## ❌ PR VALIDATION FAILED 🚨\n\n**Warning:** Some checks in the pipeline have failed. Merging this PR will likely break the production or staging builds.\n\n### Potential issues:\n- **Luacheck:** Check for Lua syntax or global errors.\n- **NUI Build:** Check if \`npm ci\` or \`npm run build\` failed.\n- **Config Sync:** A \`.lua\` and \`.dist.lua\` file are out of sync or a key is missing.\n- **Version Check:** The version must be higher for production releases.\n\n**Action Required:** Please fix the errors above before merging.`;
+            github.rest.issues.createComment({
+              owner, repo, issue_number: number,
+              body: message
+            });
+
+      - name: ✨ Handle Success (Remove Label)
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo, number } = context.issue;
+            try {
+              await github.rest.issues.removeLabel({
+                owner, repo, issue_number: number,
+                name: 'FAILED VALIDATION'
+              });
+            } catch (e) { /* Ignore if label doesn't exist */ }
