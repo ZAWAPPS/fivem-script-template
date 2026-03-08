@@ -120,7 +120,7 @@ fi
 
 echo "[*] Updating FiveM Natives..."
 \$PY .github/scripts/sync_natives.py
-git add .github/scripts/natives_defs.lua
+git add .natives.lua
 EOF
 chmod +x .git/hooks/pre-commit
 
