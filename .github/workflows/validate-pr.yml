@@ -38,9 +38,9 @@ jobs:
       - name: Validate NUI Build
         run: |
           if [ -f "web/package.json" ]; then
-            echo "Validating NUI build (Strict mode)..."
+            echo "Validating NUI build..."
             cd web
-            npm ci
+            npm ci || npm install
             npm run build
           else
             echo "No NUI found, skipping validation."

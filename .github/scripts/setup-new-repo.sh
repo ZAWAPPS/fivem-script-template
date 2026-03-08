@@ -9,11 +9,11 @@ REPO_NAME=$(gh repo view --json name -q .name 2>/dev/null || echo "my-new-script
 REPO_URL=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
 
 echo "------------------------------------------------"
-echo "🚀 Initializing ZAWAPPS Resource: $REPO_NAME"
+echo "[*] Initializing ZAWAPPS Resource: $REPO_NAME"
 echo "------------------------------------------------"
 
 # 0. Pre-flight Checks
-echo "🔍 Checking environment..."
+echo "[*] Checking environment..."
 
 # Detect Python
 if command -v python3 &>/dev/null; then
@@ -23,24 +23,24 @@ elif command -v python &>/dev/null; then
 elif command -v py &>/dev/null; then
     PYTHON_CMD="py"
 else
-    echo "❌ Error: Python not found. Please install Python 3."
+    echo "[!] Error: Python not found. Please install Python 3."
     exit 1
 fi
-echo "✅ Python found: $PYTHON_CMD"
+echo "[+] Python found: $PYTHON_CMD"
 
 # Check GH CLI
 if ! command -v gh &>/dev/null; then
-    echo "❌ Error: GitHub CLI (gh) is not installed."
+    echo "[!] Error: GitHub CLI (gh) is not installed."
     exit 1
 fi
 
 if ! gh auth status &>/dev/null; then
-    echo "❌ Error: You are not logged into GitHub CLI. Run 'gh auth login' first."
+    echo "[!] Error: You are not logged into GitHub CLI. Run 'gh auth login' first."
     exit 1
 fi
 
 # 1. Update fxmanifest.lua
-echo "📝 Updating fxmanifest.lua..."
+echo "[*] Updating fxmanifest.lua..."
 echo "Enter SCRIPT_NAME (Leave empty to use $REPO_NAME):"
 read INPUT_NAME
 [ -n "$INPUT_NAME" ] && REPO_NAME=$INPUT_NAME
@@ -79,16 +79,30 @@ if os.path.exists(path):
 EOF
 
 # 2. Setup Local Environment
-echo "📂 Setting up local files..."
+echo "[*] Setting up local files..."
 if [ -f "shared/config.dist.lua" ] && [ ! -f "shared/config.lua" ]; then
     cp shared/config.dist.lua shared/config.lua
-    echo "✅ Created shared/config.lua from template."
-fi
+    echo "[+] Created shared/config.lua from template."
+    fi
 
-echo "🌐 Syncing FiveM Natives for Luacheck..."
+    echo "[*] Initializing NUI (web) dependencies..."
+    if [ -f "web/package.json" ]; then
+        cd web
+        if command -v npm &>/dev/null; then
+            npm install
+            echo "[+] NUI dependencies installed successfully."
+        else
+            echo "[!] Warning: npm not found. Skipping NUI setup."
+        fi
+        cd ..
+    else
+        echo "[i] No web/package.json found. Skipping NUI setup."
+    fi
+
+    echo "[*] Syncing FiveM Natives for Luacheck..."
 $PYTHON_CMD .github/scripts/sync_natives.py
 
-echo "🪝 Installing Git Pre-Commit Hook..."
+echo "[*] Installing Git Pre-Commit Hook..."
 # We embed the python command detection into the hook itself for future portability
 cat << EOF > .git/hooks/pre-commit
 #!/bin/bash
@@ -100,18 +114,18 @@ elif command -v python &>/dev/null; then
 elif command -v py &>/dev/null; then
     PY="py"
 else
-    echo "⚠️ Warning: Python not found. Skipping native sync."
+    echo "[!] Warning: Python not found. Skipping native sync."
     exit 0
 fi
 
-echo "🔄 Updating FiveM Natives..."
+echo "[*] Updating FiveM Natives..."
 \$PY .github/scripts/sync_natives.py
 git add .github/scripts/natives_defs.lua
 EOF
 chmod +x .git/hooks/pre-commit
 
 # 3. Configure Branches
-echo "🌿 Setting up branches..."
+echo "[*] Setting up branches..."
 git checkout -B main
 git checkout -B develop
 git push -u origin develop --force
@@ -122,15 +136,15 @@ git push -u origin staging --force
 git checkout develop
 
 # 3. Configure Repository Settings
-echo "⚙️ Configuring GitHub repository settings..."
+echo "[*] Configuring GitHub repository settings..."
 gh repo edit "$REPO_URL" --enable-issues --enable-projects=false --enable-wiki=false
 
-echo "🏷️ Creating repository labels..."
+echo "[*] Creating repository labels..."
 # Ensure the validation label exists so the workflow doesn't crash
 gh label create "FAILED VALIDATION" --color "D93F0B" --description "PR failed CI checks" --force 2>/dev/null || true
 
 # 4. Set Secrets
-echo "🔑 Setting up Secrets..."
+echo "[*] Setting up Secrets..."
 echo "Paste PUBLIC Discord Webhook URL (or press Enter to skip):"
 read -s PUBLIC_WEBHOOK
 if [ -n "$PUBLIC_WEBHOOK" ]; then
@@ -144,7 +158,7 @@ if [ -n "$STAGING_WEBHOOK" ]; then
 fi
 
 echo "------------------------------------------------"
-echo "⚠️ MANDATORY: GitHub Personal Access Token (GH_PAT)"
+echo "[!] MANDATORY: GitHub Personal Access Token (GH_PAT)"
 echo "On GitHub Free, this is REQUIRED for automated branch sync."
 echo "The token needs 'repo' and 'workflow' scopes."
 echo "------------------------------------------------"
@@ -154,16 +168,16 @@ while [ -z "$GH_PAT_TOKEN" ]; do
 done
 
 gh secret set GH_PAT --body "$GH_PAT_TOKEN"
-echo "✅ GH_PAT set successfully."
+echo "[+] GH_PAT set successfully."
 
 # 5. Final Commit
-echo "💾 Committing initial configuration..."
+echo "[*] Committing initial configuration..."
 git add fxmanifest.lua
 git commit -m "chore: initial repository setup" || echo "Nothing to commit"
 git push origin develop
 
 echo "------------------------------------------------"
-echo "✅ $REPO_NAME is ready for development!"
+echo "[+] $REPO_NAME is ready for development!"
 echo "Current branch: develop"
 echo "Next steps:"
 echo "  1. Verify fxmanifest.lua details."

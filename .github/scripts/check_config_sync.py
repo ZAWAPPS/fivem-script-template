@@ -45,20 +45,20 @@ def get_keys_used_in_code():
     return used_keys
 
 def check_all_configs():
-    print("🔍 Scanning repository for configuration integrity...")
+    print("[*] Scanning repository for configuration integrity...")
     # Only scan for config.dist.lua to avoid catching locale files or other templates
     dist_files = glob.glob("**/config.dist.lua", recursive=True)
     
     if not dist_files:
-        print("ℹ️ No config.dist.lua files found. Skipping check.")
+        print("[i] No config.dist.lua files found. Skipping check.")
         return True
 
     all_synced = True
     code_used_keys = get_keys_used_in_code()
-    print(f"📡 Found {len(code_used_keys)} unique Config keys used in code.")
+    print(f"[*] Found {len(code_used_keys)} unique Config keys used in code.")
 
     for dist_path in dist_files:
-        print(f"📁 Validating: {dist_path}")
+        print(f"[*] Validating: {dist_path}")
         with open(dist_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
             content = re.sub(r'--.*', '', content)
@@ -69,7 +69,7 @@ def check_all_configs():
         if "config.dist.lua" in dist_path:
             missing_in_dist = code_used_keys - dist_keys
             if missing_in_dist:
-                print(f"  ❌ MISSING KEYS in {dist_path} (Used in code but not defined):")
+                print(f"  [!] MISSING KEYS in {dist_path} (Used in code but not defined):")
                 for key in sorted(missing_in_dist):
                     print(f"    - Missing: Config.{key}")
                 all_synced = False
@@ -78,7 +78,7 @@ def check_all_configs():
         # we can still compare it if it exists.
         source_path = dist_path.replace(".dist.lua", ".lua")
         if os.path.exists(source_path):
-            print(f"  🔄 Comparing with local {source_path}...")
+            print(f"  [~] Comparing with local {source_path}...")
             with open(source_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
                 content = re.sub(r'--.*', '', content)
@@ -86,17 +86,17 @@ def check_all_configs():
             
             diff = source_keys ^ dist_keys
             if diff:
-                print(f"  ❌ Local {source_path} is out of sync with {dist_path}!")
+                print(f"  [!] Local {source_path} is out of sync with {dist_path}!")
                 all_synced = False
 
         if all_synced:
-            print(f"  ✅ {dist_path} looks good.")
+            print(f"  [+] {dist_path} looks good.")
 
     return all_synced
 
 if __name__ == "__main__":
     if not check_all_configs():
-        print("\n❌ Error: Configuration integrity check failed.")
+        print("\n[!] Error: Configuration integrity check failed.")
         sys.exit(1)
-    print("\n✅ All configurations are valid and synchronized.")
+    print("\n[+] All configurations are valid and synchronized.")
     sys.exit(0)

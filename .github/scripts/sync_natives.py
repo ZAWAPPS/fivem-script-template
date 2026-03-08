@@ -8,7 +8,7 @@ URL = "https://runtime.fivem.net/doc/natives.json"
 OUTPUT = ".github/scripts/natives_defs.lua"
 
 def sync():
-    print(f"🌐 Fetching latest FiveM natives from {URL}...")
+    print(f"[*] Fetching latest FiveM natives from {URL}...")
     try:
         # Use a short timeout to prevent hanging the pipeline
         with urllib.request.urlopen(URL, timeout=10) as response:
@@ -33,9 +33,9 @@ def sync():
                 for name in sorted(native_names):
                     f.write(f"function {name}() end\n")
             
-            print(f"✅ Successfully synced {len(native_names)} natives to {OUTPUT}")
+            print(f"[+] Successfully synced {len(native_names)} natives to {OUTPUT}")
     except Exception as e:
-        print(f"⚠️ Warning: Failed to fetch natives ({e}). Creating fallback...")
+        print(f"[!] Warning: Failed to fetch natives ({e}). Creating fallback...")
         os.makedirs(os.path.dirname(OUTPUT), exist_ok=True)
         with open(OUTPUT, "w") as f:
             f.write("-- Fallback empty definitions\n")
