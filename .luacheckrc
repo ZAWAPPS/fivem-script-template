@@ -27,6 +27,10 @@ ignore = {
     "213", -- Unused loop variable
 }
 
+exclude_files = {
+    ".natives.lua"
+}
+
 -- Style settings
 max_line_length = 200
 allow_defined_top = true

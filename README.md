@@ -37,7 +37,8 @@ bash .github/scripts/setup-new-repo.sh
 
 This template includes several automated checks to prevent breaking production:
 
-- **Luacheck:** Validates Lua syntax and global definitions (including FiveM natives).
+- **Luacheck:** Validates Lua syntax and global definitions. This check is **non-blocking** (it will not fail the PR) and automatically excludes `.natives.lua`. Findings are logged as PR comments.
+  - *Note:* To manually update the native definitions, run: `python3 .github/scripts/sync_natives.py`
 - **Config Sync Check:** Ensures that every `Config.Key` used in your code exists in `shared/config.dist.lua`.
 - **NUI Validation:** Automatically runs `npm ci` and `npm run build` to verify the UI.
 - **Version Validation:** Prevents merging to `main` if the version is not higher than the current production release.

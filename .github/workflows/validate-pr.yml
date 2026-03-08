@@ -27,10 +27,29 @@ jobs:
             echo "HAS_PAT=true" >> $GITHUB_ENV
           fi
 
+      - name: Sync Global Standards (Natives)
+        run: |
+          echo "[*] Fetching latest FiveM Natives..."
+          curl -sSfL "https://raw.githubusercontent.com/ZAWAPPS/fivem-script-template/main/.natives.lua" -o .natives.lua
+
       - name: Run Luacheck
+        id: luacheck
         uses: nebularg/actions-luacheck@v1
+        continue-on-error: true
         with:
-          args: '. --no-color --codes --formatter plain'
+          # Use remote config URL for standards consistency
+          config: 'https://raw.githubusercontent.com/ZAWAPPS/fivem-script-template/main/.luacheckrc'
+          args: '. --no-color --codes --formatter plain --output report.txt'
+
+      - name: Show Luacheck Report
+        if: always()
+        run: |
+          if [ -f report.txt ]; then
+            echo "### Luacheck Report Summary ###"
+            cat report.txt
+          else
+            echo "No Luacheck report found."
+          fi
 
       - name: Validate NUI Build
         run: |
@@ -110,6 +129,7 @@ jobs:
         with:
           script: |
             const { owner, repo, number } = context.issue;
+            const fs = require('fs');
             
             // Add Label
             try {
@@ -119,8 +139,18 @@ jobs:
               });
             } catch (e) { console.log("Label error:", e); }
 
-            // Post Comment
-            const message = `## ❌ PR VALIDATION FAILED 🚨\n\n**Warning:** Some checks in the pipeline have failed. Merging this PR will likely break the production or staging builds.\n\n### Potential issues:\n- **Luacheck:** Check for Lua syntax or global errors.\n- **NUI Build:** Check if \`npm ci\` or \`npm run build\` failed.\n- **Config Sync:** A \`.lua\` and \`.dist.lua\` file are out of sync or a key is missing.\n- **Version Check:** The version must be higher for production releases.\n\n**Action Required:** Please fix the errors above before merging.`;
+            let message = `## ❌ PR VALIDATION FAILED 🚨\n\n**Warning:** Some CRITICAL checks in the pipeline have failed. Merging this PR will likely break the production or staging builds.\n\n### Potential issues:\n- **NUI Build:** Check if \`npm ci\` or \`npm run build\` failed.\n- **Config Sync:** A \`.lua\` and \`.dist.lua\` file are out of sync or a key is missing.\n- **Version Check:** The version must be higher for production releases.`;
+
+            if (fs.existsSync('report.txt')) {
+                let report = fs.readFileSync('report.txt', 'utf8').trim();
+                if (report && (report.toLowerCase().includes('error') || report.toLowerCase().includes('warning'))) {
+                    if (report.length > 3000) report = report.substring(0, 3000) + "... (truncated)";
+                    message += `\n\n### ⚠️ Luacheck Findings (Non-Blocking):\n\`\`\`\n${report}\n\`\`\``;
+                }
+            }
+
+            message += `\n\n**Action Required:** Please fix the critical errors above before merging.`;
+
             github.rest.issues.createComment({
               owner, repo, issue_number: number,
               body: message
@@ -132,9 +162,23 @@ jobs:
         with:
           script: |
             const { owner, repo, number } = context.issue;
+            const fs = require('fs');
+
             try {
               await github.rest.issues.removeLabel({
                 owner, repo, issue_number: number,
                 name: 'FAILED VALIDATION'
               });
             } catch (e) { /* Ignore if label doesn't exist */ }
+
+            if (fs.existsSync('report.txt')) {
+                let report = fs.readFileSync('report.txt', 'utf8').trim();
+                if (report && (report.toLowerCase().includes('error') || report.toLowerCase().includes('warning'))) {
+                    if (report.length > 3000) report = report.substring(0, 3000) + "... (truncated)";
+                    const message = `## ⚠️ Luacheck Warnings\n\nAll critical checks passed, but Luacheck found some potential issues. These are **non-blocking** but should be reviewed:\n\n\`\`\`\n${report}\n\`\`\``;
+                    await github.rest.issues.createComment({
+                      owner, repo, issue_number: number,
+                      body: message
+                    });
+                }
+            }

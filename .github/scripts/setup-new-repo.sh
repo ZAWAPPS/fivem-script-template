@@ -99,30 +99,18 @@ if [ -f "shared/config.dist.lua" ] && [ ! -f "shared/config.lua" ]; then
         echo "[i] No web/package.json found. Skipping NUI setup."
     fi
 
-    echo "[*] Syncing FiveM Natives for Luacheck..."
-$PYTHON_CMD .github/scripts/sync_natives.py
+    echo "[*] Setting up Luacheck & Git Hooks..."
+    # Try to install via pip as it's common on Windows/macOS/Linux
+    if ! command -v luacheck &>/dev/null; then
+        echo "[*] Luacheck not found. Attempting to install via pip..."
+        $PYTHON_CMD -m pip install luacheck 2>/dev/null || echo "[!] Could not install luacheck automatically. Please install it manually: 'pip install luacheck' or 'luarocks install luacheck'"
+    fi
 
-echo "[*] Installing Git Pre-Commit Hook..."
-# We embed the python command detection into the hook itself for future portability
-cat << EOF > .git/hooks/pre-commit
-#!/bin/bash
-# Detect Python again in case the hook runs in a different shell environment
-if command -v python3 &>/dev/null; then
-    PY="python3"
-elif command -v python &>/dev/null; then
-    PY="python"
-elif command -v py &>/dev/null; then
-    PY="py"
-else
-    echo "[!] Warning: Python not found. Skipping native sync."
-    exit 0
-fi
-
-echo "[*] Updating FiveM Natives..."
-\$PY .github/scripts/sync_natives.py
-git add .natives.lua
-EOF
-chmod +x .git/hooks/pre-commit
+    if [ -f ".github/hooks/pre-commit" ]; then
+        cp .github/hooks/pre-commit .git/hooks/pre-commit
+        chmod +x .git/hooks/pre-commit
+        echo "[+] Installed non-blocking Luacheck pre-commit hook."
+    fi
 
 # 3. Configure Branches
 echo "[*] Setting up branches..."

@@ -1,0 +1,45 @@
+#!/bin/bash
+# ZAWAPPS Non-blocking Luacheck Hook (Remote-Linked with 24h Cache)
+
+# Source of Truth
+CONFIG_URL="https://raw.githubusercontent.com/ZAWAPPS/fivem-script-template/main/.luacheckrc"
+NATIVES_URL="https://raw.githubusercontent.com/ZAWAPPS/fivem-script-template/main/.natives.lua"
+CACHE_FILE=".git/hooks/zawapps_lint_cache"
+THRESHOLD=86400 # 24 hours in seconds
+
+if command -v luacheck &>/dev/null; then
+    echo "------------------------------------------------"
+    
+    # Check if we need to update standards
+    SHOULD_UPDATE=false
+    if [ ! -f "$CACHE_FILE" ] || [ ! -f ".luacheckrc" ] || [ ! -f ".natives.lua" ]; then
+        SHOULD_UPDATE=true
+    else
+        LAST_UPDATE=$(cat "$CACHE_FILE" 2>/dev/null || echo 0)
+        CURRENT_TIME=$(date +%s)
+        if (( CURRENT_TIME - LAST_UPDATE > THRESHOLD )); then
+            SHOULD_UPDATE=true
+        fi
+    fi
+
+    if [ "$SHOULD_UPDATE" = true ]; then
+        echo "[*] Synchronizing Luacheck Standards (Cache Expired)..."
+        # Download latest standards (silent, follow redirects, fail on error)
+        if curl -sSfL "$CONFIG_URL" -o .luacheckrc && curl -sSfL "$NATIVES_URL" -o .natives.lua; then
+            date +%s > "$CACHE_FILE"
+            echo "[+] Standards updated successfully."
+        else
+            echo "[!] Warning: Could not reach remote standards. Using local fallback."
+        fi
+    else
+        echo "[*] Using Cached Luacheck Standards (Updated < 24h ago)."
+    fi
+
+    echo "[*] Running Luacheck..."
+    luacheck . || echo -e "\n⚠️  Luacheck found issues. Please review them above, but the commit will proceed.\n"
+    echo "------------------------------------------------"
+else
+    echo "[!] Luacheck not found. Skipping local linting."
+fi
+
+exit 0
