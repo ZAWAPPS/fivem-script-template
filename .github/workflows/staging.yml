@@ -9,7 +9,7 @@ on:
 jobs:
   staging-build:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
 
@@ -22,7 +22,7 @@ jobs:
       - name: Extract info
         id: info
         env:
-          PR_BODY: ${{ github.event.pull_request.body || 'VERSION: 1.0.0' }}
+          PR_BODY: "${{ github.event.pull_request.body || 'VERSION: 1.0.0' }}"
         run: |
           # Flexible Regex for SemVer (X.Y.Z) from PR body
           VERSION=$(echo "$PR_BODY" | grep -ioP '(?m)^[*-]?\s*VERSION\s*:\s*[vV]?\K\d+\.\d+\.\d+' | head -1)

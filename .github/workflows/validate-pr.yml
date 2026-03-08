@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,7 +36,8 @@ jobs:
         id: luacheck
         continue-on-error: true
         run: |
-          sudo apt-get update && sudo apt-get install -y luacheck
+          sudo apt-get update
+          sudo apt-get install -y lua-check
           curl -sSfL "https://raw.githubusercontent.com/ZAWAPPS/fivem-script-template/main/.luacheckrc" -o .luacheckrc_remote
           luacheck . --config .luacheckrc_remote --no-color --codes --formatter plain > report.txt
 

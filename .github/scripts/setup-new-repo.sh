@@ -100,10 +100,18 @@ if [ -f "shared/config.dist.lua" ] && [ ! -f "shared/config.lua" ]; then
     fi
 
     echo "[*] Setting up Luacheck & Git Hooks..."
-    # Try to install via pip as it's common on Windows/macOS/Linux
+    # Try to install via common package managers
     if ! command -v luacheck &>/dev/null; then
-        echo "[*] Luacheck not found. Attempting to install via pip..."
-        $PYTHON_CMD -m pip install luacheck 2>/dev/null || echo "[!] Could not install luacheck automatically. Please install it manually: 'pip install luacheck' or 'luarocks install luacheck'"
+        echo "[*] Luacheck not found. Attempting to install..."
+        if command -v luarocks &>/dev/null; then
+            sudo luarocks install luacheck 2>/dev/null || true
+        elif command -v apt-get &>/dev/null; then
+            sudo apt-get update && (sudo apt-get install -y lua-check || sudo apt-get install -y luacheck)
+        elif command -v brew &>/dev/null; then
+            brew install luacheck
+        else
+            echo "[!] Could not install luacheck automatically. Please install it manually: 'luarocks install luacheck' or 'brew install luacheck'"
+        fi
     fi
 
     if [ -f ".github/hooks/pre-commit" ]; then
