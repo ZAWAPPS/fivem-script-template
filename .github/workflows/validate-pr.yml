@@ -34,12 +34,11 @@ jobs:
 
       - name: Run Luacheck
         id: luacheck
-        uses: nebularg/actions-luacheck@v1
         continue-on-error: true
-        with:
-          # Use remote config URL for standards consistency
-          config: 'https://raw.githubusercontent.com/ZAWAPPS/fivem-script-template/main/.luacheckrc'
-          args: '. --no-color --codes --formatter plain --output report.txt'
+        run: |
+          sudo apt-get update && sudo apt-get install -y luacheck
+          curl -sSfL "https://raw.githubusercontent.com/ZAWAPPS/fivem-script-template/main/.luacheckrc" -o .luacheckrc_remote
+          luacheck . --config .luacheckrc_remote --no-color --codes --formatter plain > report.txt
 
       - name: Show Luacheck Report
         if: always()
