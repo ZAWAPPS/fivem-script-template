@@ -61,6 +61,11 @@ git add .changelog/fragments/initial-release.added.md
 git commit -m "chore: initial release fragment"
 git push origin develop
 
+git checkout staging
+git merge develop
+git push origin staging
+git checkout develop
+
 git checkout main
 git push origin main --force
 
