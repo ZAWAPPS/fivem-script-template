@@ -41,7 +41,11 @@ jobs:
           import os, re
           body = os.environ.get('PR_BODY', '')
           match = re.search(r'## Changelog\s*\n(.*?)(?=\n## |\Z)', body, re.DOTALL)
-          notes = match.group(1).strip() if match else "No changelog provided."
+          if match:
+              # Remove HTML comments (<!-- ... -->)
+              notes = re.sub(r'<!--.*?-->', '', match.group(1), flags=re.DOTALL).strip()
+          else:
+              notes = "No changelog provided."
           with open('staging_notes.txt', 'w') as f: f.write(notes)
           EOF
 

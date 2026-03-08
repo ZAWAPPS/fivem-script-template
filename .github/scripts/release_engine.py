@@ -74,6 +74,7 @@ def extract_changelog(pr_body):
     match = re.search(r'## Changelog\s*\n(.*?)(?=\n## |\Z)', pr_body, re.DOTALL)
     if not match: return None
     
+    # Remove HTML comments (<!-- ... -->)
     content = re.sub(r'<!--.*?-->', '', match.group(1), flags=re.DOTALL).strip()
     if not content or content.lower() == 'none': return None
         
