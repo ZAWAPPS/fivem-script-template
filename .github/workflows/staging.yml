@@ -141,8 +141,12 @@ jobs:
               }]
           }
           
+          headers = {
+              'Content-Type': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36'
+          }
           req = urllib.request.Request(webhook, data=json.dumps(payload).encode('utf-8'), 
-                                     headers={'Content-Type': 'application/json'}, method='POST')
+                                     headers=headers, method='POST')
           try:
               with urllib.request.urlopen(req) as resp: pass
           except Exception as e: print(f"Error notifying Discord: {e}")
