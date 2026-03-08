@@ -123,13 +123,38 @@ jobs:
           print("✅ PR body validation successful")
           EOF
 
+      - name: 💬 Post Luacheck Findings
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo, number } = context.issue;
+            const fs = require('fs');
+            
+            if (fs.existsSync('report.txt')) {
+                let report = fs.readFileSync('report.txt', 'utf8').trim();
+                // Check if the report contains actual findings (more than just "0 errors / 0 warnings")
+                const hasFindings = report.split('\n').some(line => {
+                    const l = line.toLowerCase();
+                    return (l.includes('warning') || l.includes('error')) && !l.includes('0 warnings') && !l.includes('0 errors');
+                }) || (report.length > 0 && !report.includes('0 warnings') && !report.includes('0 errors'));
+
+                if (hasFindings) {
+                    if (report.length > 3000) report = report.substring(0, 3000) + "... (truncated)";
+                    const message = `## ⚠️ Luacheck Findings\n\nThese findings are **non-blocking** but should be reviewed for code quality:\n\n\`\`\`\n${report}\n\`\`\``;
+                    await github.rest.issues.createComment({
+                      owner, repo, issue_number: number,
+                      body: message
+                    });
+                }
+            }
+
       - name: 🚨 Handle Failure (Label & Comment)
         if: failure()
         uses: actions/github-script@v7
         with:
           script: |
             const { owner, repo, number } = context.issue;
-            const fs = require('fs');
             
             // Add Label
             try {
@@ -139,19 +164,9 @@ jobs:
               });
             } catch (e) { console.log("Label error:", e); }
 
-            let message = `## ❌ PR VALIDATION FAILED 🚨\n\n**Warning:** Some CRITICAL checks in the pipeline have failed. Merging this PR will likely break the production or staging builds.\n\n### Potential issues:\n- **NUI Build:** Check if \`npm ci\` or \`npm run build\` failed.\n- **Config Sync:** A \`.lua\` and \`.dist.lua\` file are out of sync or a key is missing.\n- **Version Check:** The version must be higher for production releases.`;
+            const message = `## ❌ PR VALIDATION FAILED 🚨\n\n**Warning:** Some CRITICAL checks in the pipeline have failed. Merging this PR will likely break the production or staging builds.\n\n### Potential issues:\n- **NUI Build:** Check if \`npm ci\` or \`npm run build\` failed.\n- **Config Sync:** A \`.lua\` and \`.dist.lua\` file are out of sync or a key is missing.\n- **Version Check:** The version must be higher for production releases.\n\n**Action Required:** Please fix the critical errors above before merging.`;
 
-            if (fs.existsSync('report.txt')) {
-                let report = fs.readFileSync('report.txt', 'utf8').trim();
-                if (report && (report.toLowerCase().includes('error') || report.toLowerCase().includes('warning'))) {
-                    if (report.length > 3000) report = report.substring(0, 3000) + "... (truncated)";
-                    message += `\n\n### ⚠️ Luacheck Findings (Non-Blocking):\n\`\`\`\n${report}\n\`\`\``;
-                }
-            }
-
-            message += `\n\n**Action Required:** Please fix the critical errors above before merging.`;
-
-            github.rest.issues.createComment({
+            await github.rest.issues.createComment({
               owner, repo, issue_number: number,
               body: message
             });
@@ -162,7 +177,6 @@ jobs:
         with:
           script: |
             const { owner, repo, number } = context.issue;
-            const fs = require('fs');
 
             try {
               await github.rest.issues.removeLabel({
@@ -170,15 +184,3 @@ jobs:
                 name: 'FAILED VALIDATION'
               });
             } catch (e) { /* Ignore if label doesn't exist */ }
-
-            if (fs.existsSync('report.txt')) {
-                let report = fs.readFileSync('report.txt', 'utf8').trim();
-                if (report && (report.toLowerCase().includes('error') || report.toLowerCase().includes('warning'))) {
-                    if (report.length > 3000) report = report.substring(0, 3000) + "... (truncated)";
-                    const message = `## ⚠️ Luacheck Warnings\n\nAll critical checks passed, but Luacheck found some potential issues. These are **non-blocking** but should be reviewed:\n\n\`\`\`\n${report}\n\`\`\``;
-                    await github.rest.issues.createComment({
-                      owner, repo, issue_number: number,
-                      body: message
-                    });
-                }
-            }
