@@ -1,7 +1,7 @@
 -- FiveM Luacheck Configuration (ZAWAPPS)
 -- Professional configuration with automated native definition support.
 
-std = "lua54"
+std = "lua53"
 
 -- Core System Globals (Manually maintained for fundamental APIs)
 globals = {
@@ -22,7 +22,7 @@ read_globals = {
 }
 
 -- Custom rules
-ignore = { 
+ignore = {
     "212", -- Unused argument
     "213", -- Unused loop variable
 }
