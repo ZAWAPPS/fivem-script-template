@@ -16,9 +16,9 @@ def run_cmd(cmd):
     return result.stdout.strip()
 
 def get_last_tag():
-    tag = run_cmd(['git', 'describe', '--tags', '--abbrev=0'])        
+    tag = run_cmd(['git', 'describe', '--tags', '--abbrev=0'])
     if not tag:
-        tag = run_cmd(['git', 'rev-list', '--max-parents=0', 'HEAD']) 
+        tag = run_cmd(['git', 'rev-list', '--max-parents=0', 'HEAD'])
     return tag
 
 def extract_changelog(pr_body):
@@ -47,7 +47,7 @@ def get_merged_prs(last_tag):
         env['GH_TOKEN'] = env['GITHUB_TOKEN']
 
     for base in ['develop', 'staging', 'main']:
-        cmd = ['gh', 'pr', 'list', '--state', 'merged', '--base', base, '--limit', '100', '--json', 'number,title,body,mergeCommit']       
+        cmd = ['gh', 'pr', 'list', '--state', 'merged', '--base', base, '--limit', '100', '--json', 'number,title,body,mergeCommit']
         result = subprocess.run(cmd, capture_output=True, text=True, errors='ignore', env=env)
         if result.returncode == 0:
             try:
@@ -80,11 +80,11 @@ def get_merged_prs(last_tag):
             # Determine if this PR has unique notes
             notes = extract_changelog(pr['body'])
             is_sync = any(term in pr['title'].lower() for term in ["sync ", "merge branch", "merge develop", "merge staging"])
-            
+
             # If it's a sync PR with no unique notes, skip it to avoid duplication
             if is_sync and not notes:
                 continue
-                
+
             final_prs.append(pr)
 
     return final_prs
@@ -102,28 +102,28 @@ def build_full_changelog(version, prs):
             # Check if this exact note block has been seen (to avoid repetition in sync PRs)
             if notes in seen_notes:
                 continue
-            
-            entry.append(f'#### PR #{pr["number"]}: {pr["title"]}')   
+
+            entry.append(f'#### PR #{pr["number"]}: {pr["title"]}')
             entry.append(notes)
             entry.append('')
             seen_notes.add(notes)
             found_any = True
-            
+
     if not found_any:
         entry.append('- Internal updates and stability improvements.')
         entry.append('')
-        
+
     return '\n'.join(entry)
 
 def update_manifest(version):
     if not os.path.exists(MANIFEST_FILE): return False
     with open(MANIFEST_FILE, 'r', encoding='utf-8', errors='ignore') as f:
         content = f.read()
-    
+
     new_content = re.sub(
-        r"^(\s*version\s+)(['\"])[^'\"]*(['\"])", 
-        r"\1\2" + version + r"\3", 
-        content, 
+        r"^(\s*(?<!fx_)version\s+)(['\"])[^'\"]*(['\"])",
+        r"\1\2" + version + r"\3",
+        content,
         flags=re.M
     )
 
@@ -138,19 +138,19 @@ def update_changelog_file(version, entry):
     if not os.path.exists(CHANGELOG_FILE):
         with open(CHANGELOG_FILE, 'w', encoding='utf-8') as f:
             f.write(f"# Changelog\n\n{MARKER}\n")
-            
+
     with open(CHANGELOG_FILE, 'r', encoding='utf-8', errors='ignore') as f:
         content = f.read()
-        
+
     if MARKER not in content:
         content = f"# Changelog\n\n{MARKER}\n\n" + content
 
     version_header = f"## [{version}]"
     if version_header in content:
         return
-        
+
     new_content = content.replace(MARKER, f"{MARKER}\n\n{entry.strip()}\n", 1)
-    
+
     with open(CHANGELOG_FILE, 'w', encoding='utf-8', newline='\n') as f:
         f.write(new_content)
 
@@ -158,11 +158,11 @@ if __name__ == '__main__':
     version = "0.0.0"
     if len(sys.argv) >= 2:
         version = sys.argv[1].lstrip('v')
-    
+
     last_tag = get_last_tag()
     prs = get_merged_prs(last_tag)
     entry = build_full_changelog(version, prs)
-    
+
     if os.environ.get('DRY_RUN') == 'true':
         print(entry)
     else:

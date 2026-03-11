@@ -28,11 +28,11 @@ jobs:
         run: |
           # Flexible Regex for SemVer (X.Y.Z) from PR Body
           VERSION=$(echo "$PR_BODY" | grep -ioP '(?m)^[*-]?\s*VERSION\s*:\s*[vV]?\K\d+\.\d+\.\d+' | head -1)
-          
+
           # If manual dispatch or missing in PR, fallback to manifest
           if [ -z "$VERSION" ]; then
             # Quote-agnostic extraction from fxmanifest
-            VERSION=$(grep -ioP "version\s+['\"]\K[^'\"]+" fxmanifest.lua | head -1)
+            VERSION=$(grep -ioP "^\s*version\s+['\"]\K[^'\"]+" fxmanifest.lua | head -1)
           fi
 
           if [ -z "$VERSION" ]; then
@@ -41,7 +41,7 @@ jobs:
           fi
 
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          
+
           # Quote-agnostic SCRIPT_NAME extraction
           SCRIPT_NAME=$(grep -ioP "name\s+['\"]\K[^'\"]+" fxmanifest.lua | head -1 | tr ' ' '-')
           [ -z "$SCRIPT_NAME" ] && SCRIPT_NAME=${{ github.event.repository.name }}
@@ -82,7 +82,7 @@ jobs:
         run: |
           # We need to fetch all branches
           git fetch origin develop staging
-          
+
           for branch in develop staging; do
             echo "Attempting to sync main back to $branch..."
             git checkout $branch
@@ -92,7 +92,7 @@ jobs:
             else
               echo "⚠️ Conflicts detected syncing to $branch. Creating Sync PR..."
               git merge --abort
-              
+
               # Check if a sync PR already exists to avoid spam
               EXISTING_PR=$(gh pr list --base $branch --head main --state open --json number -q '.[0].number')
               if [ -z "$EXISTING_PR" ]; then
@@ -113,10 +113,10 @@ jobs:
         run: |
           VERSION=${{ steps.info.outputs.version }}
           SCRIPT_NAME=${{ steps.info.outputs.script_name }}
-          
+
           # Create a temporary staging area for the zip to include a root folder
           mkdir -p "package/$SCRIPT_NAME"
-          
+
           # Package logic: Exclude source files, include built assets, exclude internal dev files
           rsync -av \
             --exclude='.*' \
@@ -136,7 +136,7 @@ jobs:
             --exclude='.gitignore' \
             --exclude='*.py' \
             ./ "package/$SCRIPT_NAME/"
-          
+
           # Plug-and-Play Config Handling
           find "package/$SCRIPT_NAME" -name "*.dist.lua" | while read dist_file; do
             lua_file="${dist_file%.dist.lua}.lua"
@@ -179,7 +179,7 @@ jobs:
           if not webhook:
               print("No Discord webhook URL found. Skipping notification.")
               exit(0)
-          
+
           # Try to get a clean display name from fxmanifest
           display_name = os.environ['REPO'].split('/')[-1]
           if os.path.exists('fxmanifest.lua'):
@@ -192,10 +192,10 @@ jobs:
           if os.path.exists(notes_path):
               with open(notes_path, 'r', encoding='utf-8', errors='ignore') as f:
                   notes = f.read().strip()
-          
+
           if len(notes) > 1900:
               notes = notes[:1890] + "\n... (notes truncated)"
-          
+
           payload = {
               "username": display_name,
               "embeds": [{
@@ -205,12 +205,12 @@ jobs:
                   "footer": {"text": "v" + os.environ['VERSION'] + " • Automated Release"}
               }]
           }
-          
+
           headers = {
               'Content-Type': 'application/json',
               'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36'
           }
-          req = urllib.request.Request(webhook, data=json.dumps(payload).encode('utf-8'), 
+          req = urllib.request.Request(webhook, data=json.dumps(payload).encode('utf-8'),
                                      headers=headers, method='POST')
           try:
               with urllib.request.urlopen(req) as resp: pass
